@@ -1,159 +1,211 @@
 import { useState, useEffect, useRef } from 'react';
-import { AudioService } from '../../services/audioService';
+import { useAudioRecording } from '../../hooks/useAudioRecording';
+import { VolumeVisualizer } from './VolumeVisualizer';
+import type { AudioVisualizationData } from '../../services/audioService';
 
 interface AudioSetupProps {
-  onReady: () => void;
+  onComplete: () => void;
 }
 
-export const AudioSetup: React.FC<AudioSetupProps> = ({ onReady }) => {
-  const [isTestRecording, setIsTestRecording] = useState(false);
-  const [testAudioUrl, setTestAudioUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [volume, setVolume] = useState(0);
-  
-  const audioService = useRef(new AudioService());
-  const audioContext = useRef<AudioContext | null>(null);
-  const analyser = useRef<AnalyserNode | null>(null);
-  const dataArray = useRef<Uint8Array | null>(null);
-  const animationFrame = useRef<number>();
+export function AudioSetup({ onComplete }: AudioSetupProps) {
+  // Audio recording state
+  const [testRecording, setTestRecording] = useState<Blob | null>(null);
+  const [isPlayingBack, setIsPlayingBack] = useState(false);
+  const [setupStep, setSetupStep] = useState<'testing' | 'recording' | 'playback' | 'complete'>('testing');
+  const [visualizationData, setVisualizationData] = useState<AudioVisualizationData>({
+    volume: 0,
+    frequency: new Float32Array()
+  });
 
+  // Audio element for playback
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  // Initialize audio recording hook
+  const {
+    isInitialized,
+    isRecording,
+    isPaused,
+    error,
+    volume,
+    startRecording,
+    stopRecording,
+    testMicrophone
+  } = useAudioRecording({
+    onVisualizationData: setVisualizationData
+  });
+
+  // Handle errors
   useEffect(() => {
+    if (error) {
+      // onError(error); // This line was removed as per the new_code
+    }
+  }, [error]); // Removed onError from dependency array
+
+  // Microphone test effect
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    if (setupStep === 'testing' && isInitialized) {
+      intervalId = setInterval(async () => {
+        const result = await testMicrophone();
+        if (result.volume > 0.01) {
+          // If we detect sound, move to recording step
+          setSetupStep('recording');
+        }
+      }, 100);
+    }
+
     return () => {
-      if (animationFrame.current) {
-        cancelAnimationFrame(animationFrame.current);
-      }
-      audioService.current.cleanup();
-      if (testAudioUrl) {
-        URL.revokeObjectURL(testAudioUrl);
+      if (intervalId) {
+        clearInterval(intervalId);
       }
     };
-  }, [testAudioUrl]);
+  }, [setupStep, isInitialized, testMicrophone]);
 
-  const initializeAudioAnalyser = async () => {
+  // Handle test recording
+  const handleStartTestRecording = async () => {
     try {
-      await audioService.current.initializeAudio();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      audioContext.current = new AudioContext();
-      analyser.current = audioContext.current.createAnalyser();
-      const source = audioContext.current.createMediaStreamSource(stream);
-      source.connect(analyser.current);
-      
-      analyser.current.fftSize = 256;
-      const bufferLength = analyser.current.frequencyBinCount;
-      dataArray.current = new Uint8Array(bufferLength);
-
-      const updateVolume = () => {
-        if (analyser.current && dataArray.current) {
-          analyser.current.getByteFrequencyData(dataArray.current);
-          const average = dataArray.current.reduce((a, b) => a + b) / dataArray.current.length;
-          setVolume(average);
-          animationFrame.current = requestAnimationFrame(updateVolume);
-        }
-      };
-      
-      updateVolume();
+      await startRecording();
     } catch (err) {
-      setError('Failed to initialize audio. Please check your microphone permissions.');
+      // onError(err instanceof Error ? err.message : 'Failed to start recording'); // This line was removed as per the new_code
     }
   };
 
-  const startTestRecording = async () => {
+  const handleStopTestRecording = async () => {
     try {
-      setIsTestRecording(true);
-      audioService.current.startRecording();
+      const blob = await stopRecording();
+      setTestRecording(blob);
+      setSetupStep('playback');
     } catch (err) {
-      setError('Failed to start recording');
+      // onError(err instanceof Error ? err.message : 'Failed to stop recording'); // This line was removed as per the new_code
     }
   };
 
-  const stopTestRecording = async () => {
-    try {
-      const audioBlob = await audioService.current.stopRecording();
-      setIsTestRecording(false);
-      const url = URL.createObjectURL(audioBlob);
-      if (testAudioUrl) {
-        URL.revokeObjectURL(testAudioUrl);
-      }
-      setTestAudioUrl(url);
-    } catch (err) {
-      setError('Failed to stop recording');
+  // Handle playback
+  const handlePlayRecording = () => {
+    if (audioRef.current && testRecording) {
+      const url = URL.createObjectURL(testRecording);
+      audioRef.current.src = url;
+      audioRef.current.play();
+      setIsPlayingBack(true);
     }
   };
 
-  if (error) {
-    return (
-      <div className="text-red-500 p-4 rounded-md bg-red-50">
-        Error: {error}
-      </div>
-    );
-  }
+  const handlePlaybackEnded = () => {
+    setIsPlayingBack(false);
+    if (audioRef.current) {
+      URL.revokeObjectURL(audioRef.current.src);
+    }
+  };
+
+  const handleConfirmAudio = () => {
+    setSetupStep('complete');
+    onComplete();
+  };
+
+  const handleRetryRecording = () => {
+    setTestRecording(null);
+    setSetupStep('recording');
+  };
 
   return (
-    <div className="space-y-6 bg-white p-6 rounded-lg shadow-sm">
-      <h2 className="text-xl font-semibold">Audio Setup</h2>
-      
-      <div className="space-y-4">
-        <button
-          onClick={initializeAudioAnalyser}
-          className="btn btn-primary"
-        >
-          Initialize Microphone
-        </button>
-
-        {volume > 0 && (
-          <div className="space-y-2">
-            <p className="text-sm text-gray-600">Microphone Level:</p>
-            <div className="h-2 bg-gray-200 rounded-full">
-              <div
-                className="h-2 bg-primary-500 rounded-full transition-all duration-100"
-                style={{ width: `${Math.min(100, (volume / 256) * 100)}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {volume > 0 && !testAudioUrl && (
-          <div className="space-x-4">
-            <button
-              onClick={startTestRecording}
-              className="btn btn-secondary"
-              disabled={isTestRecording}
+    <div className="space-y-6 max-w-2xl mx-auto">
+      {/* Step indicator */}
+      <div className="flex justify-between mb-8">
+        {['testing', 'recording', 'playback', 'complete'].map((step) => (
+          <div
+            key={step}
+            className={`flex items-center ${
+              setupStep === step ? 'text-blue-600' : 'text-gray-400'
+            }`}
+          >
+            <div
+              className={`w-8 h-8 rounded-full flex items-center justify-center border-2 ${
+                setupStep === step
+                  ? 'border-blue-600 bg-blue-50'
+                  : 'border-gray-300'
+              }`}
             >
-              Record Test
-            </button>
-            {isTestRecording && (
+              {setupStep === step ? '✓' : ''}
+            </div>
+            <span className="ml-2 capitalize">{step}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Microphone Testing */}
+      {setupStep === 'testing' && (
+        <div className="bg-white p-6 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold mb-4">Testing Microphone</h3>
+          <p className="text-gray-600 mb-4">
+            Please speak into your microphone. We'll detect when it's working.
+          </p>
+          <VolumeVisualizer data={visualizationData} />
+          <div className="mt-4 text-sm text-gray-500">
+            {isInitialized ? 'Listening for audio...' : 'Initializing microphone...'}
+          </div>
+        </div>
+      )}
+
+      {/* Recording Test */}
+      {setupStep === 'recording' && (
+        <div className="bg-white p-6 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold mb-4">Test Recording</h3>
+          <p className="text-gray-600 mb-4">
+            Let's record a quick test to verify everything is working properly.
+          </p>
+          <VolumeVisualizer data={visualizationData} />
+          <div className="mt-6 flex justify-center">
+            {!isRecording ? (
               <button
-                onClick={stopTestRecording}
-                className="btn btn-primary"
+                onClick={handleStartTestRecording}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
               >
-                Stop Test
+                Start Test Recording
+              </button>
+            ) : (
+              <button
+                onClick={handleStopTestRecording}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors"
+              >
+                Stop Recording
               </button>
             )}
           </div>
-        )}
+        </div>
+      )}
 
-        {testAudioUrl && (
-          <div className="space-y-4">
-            <p className="text-sm text-gray-600">Test Recording:</p>
-            <audio controls src={testAudioUrl} className="w-full" />
-            <div className="space-x-4">
-              <button
-                onClick={() => setTestAudioUrl(null)}
-                className="btn btn-secondary"
-              >
-                Record Again
-              </button>
-              <button
-                onClick={onReady}
-                className="btn btn-primary"
-              >
-                Start Interview
-              </button>
-            </div>
+      {/* Playback Verification */}
+      {setupStep === 'playback' && testRecording && (
+        <div className="bg-white p-6 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold mb-4">Verify Recording</h3>
+          <p className="text-gray-600 mb-4">
+            Listen to your test recording to make sure everything sounds correct.
+          </p>
+          <audio ref={audioRef} onEnded={handlePlaybackEnded} className="hidden" />
+          <div className="flex justify-center space-x-4">
+            <button
+              onClick={handlePlayRecording}
+              disabled={isPlayingBack}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50"
+            >
+              {isPlayingBack ? 'Playing...' : 'Play Recording'}
+            </button>
+            <button
+              onClick={handleRetryRecording}
+              className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors"
+            >
+              Record Again
+            </button>
+            <button
+              onClick={handleConfirmAudio}
+              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors"
+            >
+              Sounds Good
+            </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
-}; 
+} 

@@ -1,24 +1,21 @@
+import { cn } from "@/lib/utils";
+
 interface LoadingSpinnerProps {
-  size?: 'sm' | 'md' | 'lg';
   className?: string;
 }
 
-export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
-  size = 'md',
-  className = '',
-}) => {
-  const sizeClasses = {
-    sm: 'w-4 h-4',
-    md: 'w-8 h-8',
-    lg: 'w-12 h-12',
-  };
-
+export function LoadingSpinner({ className }: LoadingSpinnerProps) {
   return (
-    <div className={`relative ${className}`}>
-      <div
-        className={`${sizeClasses[size]} border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin`}
-      />
-      <span className="sr-only">Loading...</span>
+    <div
+      className={cn(
+        "inline-block h-4 w-4 animate-spin rounded-full border-2 border-solid border-current border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]",
+        className
+      )}
+      role="status"
+    >
+      <span className="!absolute !-m-px !h-px !w-px !overflow-hidden !whitespace-nowrap !border-0 !p-0 ![clip:rect(0,0,0,0)]">
+        Loading...
+      </span>
     </div>
   );
-}; 
+} 

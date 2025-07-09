@@ -1,151 +1,188 @@
 import { useState, useEffect, useRef } from 'react';
-import { AudioService } from '../../services/audioService';
-import { ElevenLabsService } from '../../services/elevenLabsService';
-
-interface Question {
-  id: string;
-  text: string;
-  type: 'main' | 'followup' | 'branch';
-}
+import { ElevenLabsService } from '@/services/elevenLabsService';
+import { StorageService } from '@/services/storageService';
+import { AudioService } from '@/services/audioService';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
 interface InterviewSessionProps {
-  questions: Question[];
-  onComplete: (audioBlob: Blob) => void;
+  elevenLabsService: ElevenLabsService;
+  selectedVoiceId: string;
 }
 
-export const InterviewSession: React.FC<InterviewSessionProps> = ({
-  questions,
-  onComplete,
-}) => {
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+export function InterviewSession({
+  elevenLabsService,
+  selectedVoiceId,
+}: InterviewSessionProps) {
+  const [isStarted, setIsStarted] = useState(false);
+  const [currentQuestion, setCurrentQuestion] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const audioService = useRef(new AudioService());
-  const elevenLabsService = useRef(new ElevenLabsService());
+  const storageService = useRef(new StorageService());
+
+  // Mock questions for now - will be replaced with actual API integration
+  const questions = [
+    "Tell me about your experience with React.",
+    "What are your thoughts on TypeScript?",
+    "How do you handle state management in your applications?",
+  ];
 
   useEffect(() => {
     const initializeAudio = async () => {
       try {
         await audioService.current.initializeAudio();
       } catch (err) {
+        console.error('Failed to initialize audio:', err);
         setError('Failed to initialize audio. Please check your microphone permissions.');
       }
     };
 
     initializeAudio();
-
     return () => {
       audioService.current.cleanup();
     };
   }, []);
 
-  const askQuestion = async (question: Question) => {
+  const startInterview = async () => {
     try {
-      const audioData = await elevenLabsService.current.textToSpeech(question.text);
-      await ElevenLabsService.playAudio(audioData);
+      setIsStarted(true);
+      await speakQuestion(questions[0]);
+      startRecording();
     } catch (err) {
-      setError('Failed to synthesize speech');
+      setError('Failed to start interview');
+      console.error('Error starting interview:', err);
     }
   };
 
-  const handleStartRecording = async () => {
+  const startRecording = async () => {
     try {
-      audioService.current.startRecording();
+      await audioService.current.startRecording();
       setIsRecording(true);
-      await askQuestion(questions[currentQuestionIndex]);
     } catch (err) {
-      setError('Failed to start recording');
+      console.error('Failed to start recording:', err);
+      setError('Failed to start recording. Please check your microphone permissions.');
     }
   };
 
-  const handleStopRecording = async () => {
+  const stopRecording = async () => {
     try {
       const audioBlob = await audioService.current.stopRecording();
       setIsRecording(false);
-      onComplete(audioBlob);
+
+      // Upload the recording
+      // Note: In a real app, you'd get the userId from your auth system
+      const tempUserId = 'test-user';
+      const metadata = {
+        questionIndex: currentQuestion,
+        questionText: questions[currentQuestion],
+        timestamp: new Date().toISOString(),
+      };
+
+      await storageService.current.uploadRecording(audioBlob, tempUserId, metadata);
     } catch (err) {
-      setError('Failed to stop recording');
+      console.error('Failed to stop recording:', err);
+      setError('Failed to save recording');
     }
   };
 
-  const handlePauseResume = () => {
-    if (isPaused) {
-      audioService.current.resumeRecording();
-    } else {
-      audioService.current.pauseRecording();
+  const speakQuestion = async (text: string) => {
+    try {
+      setIsProcessing(true);
+      const audioStream = await elevenLabsService.textToSpeech(text);
+      await ElevenLabsService.playAudioStream(
+        audioStream,
+        () => setIsProcessing(false),
+        () => {
+          console.log('Question finished playing');
+        },
+        (error) => {
+          console.error('Error playing question:', error);
+          setError('Failed to play question audio');
+          setIsProcessing(false);
+        }
+      );
+    } catch (err) {
+      console.error('Error speaking question:', err);
+      setError('Failed to speak question');
+      setIsProcessing(false);
     }
-    setIsPaused(!isPaused);
   };
 
   const handleNextQuestion = async () => {
-    if (currentQuestionIndex < questions.length - 1) {
-      setCurrentQuestionIndex(currentQuestionIndex + 1);
-      await askQuestion(questions[currentQuestionIndex + 1]);
+    if (currentQuestion < questions.length - 1) {
+      // Stop current recording
+      await stopRecording();
+
+      // Move to next question
+      const nextQuestion = currentQuestion + 1;
+      setCurrentQuestion(nextQuestion);
+
+      // Speak next question and start new recording
+      await speakQuestion(questions[nextQuestion]);
+      startRecording();
+    } else {
+      // Interview complete
+      await stopRecording();
+      setIsStarted(false);
+      // You might want to redirect or show a completion screen here
     }
   };
 
-  if (error) {
+  if (!isStarted) {
     return (
-      <div className="text-red-500 p-4 rounded-md bg-red-50">
-        Error: {error}
+      <div className="text-center">
+        <h2 className="text-2xl font-bold mb-4">Ready to Begin</h2>
+        <p className="mb-6">
+          The interview will consist of {questions.length} questions. Your responses will be recorded.
+        </p>
+        <button
+          onClick={startInterview}
+          disabled={isProcessing}
+          className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+        >
+          {isProcessing ? 'Starting...' : 'Start Interview'}
+        </button>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="bg-white p-6 rounded-lg shadow-sm">
-        <h2 className="text-xl font-semibold mb-4">
-          Question {currentQuestionIndex + 1} of {questions.length}
-        </h2>
-        <p className="text-gray-700 mb-4">{questions[currentQuestionIndex].text}</p>
+      <div className="p-6 bg-white rounded-lg shadow">
+        <h3 className="text-lg font-medium mb-2">Question {currentQuestion + 1}</h3>
+        <p className="text-gray-700">{questions[currentQuestion]}</p>
         
-        <div className="flex space-x-4">
-          {!isRecording ? (
-            <button
-              onClick={handleStartRecording}
-              className="btn btn-primary"
-            >
-              Start Recording
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={handlePauseResume}
-                className="btn btn-secondary"
-              >
-                {isPaused ? 'Resume' : 'Pause'}
-              </button>
-              <button
-                onClick={handleStopRecording}
-                className="btn btn-primary"
-              >
-                Stop Recording
-              </button>
-              <button
-                onClick={handleNextQuestion}
-                className="btn btn-secondary"
-                disabled={currentQuestionIndex === questions.length - 1}
-              >
-                Next Question
-              </button>
-            </>
-          )}
-        </div>
+        {isRecording && (
+          <div className="mt-4 flex items-center justify-center text-sm text-gray-500">
+            <LoadingSpinner className="w-4 h-4 mr-2" />
+            Recording in progress...
+          </div>
+        )}
       </div>
 
-      {isRecording && (
-        <div className="bg-white p-4 rounded-lg shadow-sm">
-          <div className="h-2 bg-primary-100 rounded-full">
-            <div className="h-2 bg-primary-500 rounded-full animate-pulse w-full" />
-          </div>
-          <p className="text-center text-sm text-gray-500 mt-2">
-            {isPaused ? 'Recording paused' : 'Recording in progress...'}
-          </p>
+      {error && (
+        <div className="p-4 bg-red-50 text-red-700 rounded-lg">
+          {error}
+          <button
+            onClick={() => setError(null)}
+            className="ml-4 text-sm underline hover:no-underline"
+          >
+            Dismiss
+          </button>
         </div>
       )}
+
+      <div className="flex justify-between">
+        <button
+          onClick={handleNextQuestion}
+          disabled={currentQuestion >= questions.length - 1 || isProcessing}
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+        >
+          {currentQuestion >= questions.length - 1 ? 'Complete Interview' : 'Next Question'}
+        </button>
+      </div>
     </div>
   );
-}; 
+} 
