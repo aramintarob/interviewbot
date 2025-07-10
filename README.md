@@ -86,20 +86,20 @@ InterviewBot is a lightweight web-based platform that facilitates automated voic
   - RESTful API design
   - WebSocket support for real-time communication
 
-- **AWS Infrastructure**
-  - EC2 for application hosting
-  - S3 for audio storage
-  - SES for email delivery
-  - CloudWatch for monitoring
-  - Route 53 for DNS management
-  - ACM for SSL certificates
+- **Supabase Infrastructure**
+  - Authentication and user management
+  - PostgreSQL database for structured data
+  - Storage for audio files and transcripts
+  - Real-time subscriptions
+  - Row Level Security (RLS)
+  - Edge Functions for serverless compute
 
-- **Database**
-  - DynamoDB for interview data:
-    - Interview configurations
-    - Question sets
-    - Session metadata
-    - Completion status
+- **Database Schema**
+  - Interview configurations
+  - Question sets
+  - Session metadata
+  - Completion status
+  - Audio recordings and transcripts
 
 - **Authentication & Security**
   - UUID-based interview links
@@ -111,7 +111,7 @@ InterviewBot is a lightweight web-based platform that facilitates automated voic
 - **File Processing**
   - Multer for file uploads
   - Sharp for image processing (if needed)
-  - AWS SDK for S3 operations
+  - Supabase Storage for file operations
   - Stream processing for large files
 
 ### APIs & External Services
@@ -122,11 +122,12 @@ InterviewBot is a lightweight web-based platform that facilitates automated voic
   - Rate limit monitoring
   - Backup voice configurations
 
-- **AWS Services Integration**
-  - S3 bucket management
-  - SES email templates
-  - CloudWatch logging
-  - AWS SDK configuration
+- **Supabase Integration**
+  - Storage bucket management
+  - Database operations
+  - Real-time subscriptions
+  - Edge Functions
+  - Row Level Security policies
 
 ### Data Models
 
@@ -195,7 +196,6 @@ POST   /api/transcripts/generate // Generate transcript
 - **Required Tools**
   - Node.js v18+
   - npm or yarn
-  - AWS CLI
   - Git
   - TypeScript 5.0+
 
@@ -206,19 +206,17 @@ PORT=3000
 NODE_ENV=development
 API_BASE_URL=http://localhost:3000
 
-# AWS Configuration
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-AWS_S3_BUCKET=
-AWS_SES_FROM_EMAIL=
+# Supabase Configuration
+VITE_SUPABASE_URL=your_supabase_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
 # ElevenLabs Configuration
-ELEVEN_LABS_API_KEY=
-ELEVEN_LABS_VOICE_ID=
+VITE_ELEVEN_LABS_API_KEY=your_eleven_labs_key
+VITE_ELEVEN_LABS_VOICE_ID=your_voice_id
 
 # Security
-JWT_SECRET=
+JWT_SECRET=your_jwt_secret
 CORS_ORIGINS=http://localhost:5173
 ```
 
@@ -236,8 +234,8 @@ CORS_ORIGINS=http://localhost:5173
   - Security scanning
 
 - **Production**
-  - AWS CodePipeline
-  - Blue-green deployment
+  - Vercel deployment
+  - Supabase database migrations
   - Automated backups
   - Error monitoring
 
@@ -273,13 +271,13 @@ CORS_ORIGINS=http://localhost:5173
 ### Phase 1 - MVP
 - Basic interview functionality
 - ElevenLabs integration
-- Simple recording and email delivery
+- Simple recording and storage
 - Essential user interface
 - Question preview
 - Pause/Resume capability
 
 ### Phase 2 - Enhancement (Future)
-- User authentication
+- User authentication with Supabase
 - Advanced branching logic
 - Enhanced analytics
 - Interview dashboard
@@ -290,9 +288,10 @@ CORS_ORIGINS=http://localhost:5173
 graph TD
     A[Expert Browser] -->|WebRTC| B[Web Server]
     B -->|API| C[ElevenLabs]
-    B -->|Storage| D[AWS S3]
-    B -->|Email| E[AWS SES]
-    F[Setup UI] -->|Question Config| B
+    B -->|Storage| D[Supabase Storage]
+    B -->|Database| E[Supabase PostgreSQL]
+    B -->|Auth| F[Supabase Auth]
+    G[Setup UI] -->|Question Config| B
 ```
 
 ## Success Metrics
@@ -303,7 +302,7 @@ graph TD
 - Expert satisfaction
 
 ## Maintenance
-- Regular AWS infrastructure monitoring
+- Regular Supabase database monitoring
 - ElevenLabs API status tracking
 - Basic error logging
 - Weekly backups
@@ -324,19 +323,19 @@ graph TD
 - Loading spinner
 
 ### Phase 2: Audio Foundation (Current Focus)
-1. **Audio Recording Implementation**
+1. **Audio Recording Implementation** - complete
    - Complete AudioService testing
    - Add volume visualization
    - Implement pause/resume functionality
    - Add audio format conversion utilities
 
-2. **Audio Setup Component**
+2. **Audio Setup Component** - complete
    - Implement microphone testing
    - Add volume level display
    - Create test recording feature
    - Add audio playback verification
 
-3. **ElevenLabs Integration**
+3. **ElevenLabs Integration** - complete
    - Complete voice synthesis service
    - Test voice selection
    - Implement streaming playback

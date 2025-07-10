@@ -7,6 +7,7 @@ interface Voice {
   name: string;
   preview_url: string;
   category: string;
+  available_for_tiers?: string[];
 }
 
 interface VoiceSettings {
@@ -41,16 +42,81 @@ export class ElevenLabsService {
   };
 
   constructor(apiKey = import.meta.env.VITE_ELEVEN_LABS_API_KEY, voiceId = import.meta.env.VITE_ELEVEN_LABS_VOICE_ID) {
-    if (!apiKey) throw new Error('ElevenLabs API key is required');
+    console.log('Environment check:', {
+      VITE_ELEVEN_LABS_API_KEY_exists: !!import.meta.env.VITE_ELEVEN_LABS_API_KEY,
+      VITE_ELEVEN_LABS_API_KEY_type: typeof import.meta.env.VITE_ELEVEN_LABS_API_KEY,
+      VITE_ELEVEN_LABS_API_KEY_length: import.meta.env.VITE_ELEVEN_LABS_API_KEY?.length,
+      apiKey_exists: !!apiKey,
+      apiKey_type: typeof apiKey,
+      apiKey_length: apiKey?.length
+    });
+
+    if (!apiKey) {
+      throw new Error('ElevenLabs API key is required');
+    }
+
+    // Validate API key format
+    if (typeof apiKey !== 'string' || !apiKey.startsWith('sk_') || apiKey.length < 32) {
+      throw new Error('Invalid ElevenLabs API key format. It should start with "sk_" and be at least 32 characters long.');
+    }
+
     this.apiKey = apiKey;
     this.voiceId = voiceId;
+    
+    // Test the API key immediately
+    this.testApiKey();
   }
 
-  private get headers() {
-    return {
+  private getHeaders(contentType = 'application/json') {
+    const headers = {
       'xi-api-key': this.apiKey,
-      'Content-Type': 'application/json',
+      'Content-Type': contentType,
+      'Accept': contentType
     };
+    console.log('Generated headers:', {
+      ...headers,
+      'xi-api-key': headers['xi-api-key'] ? `${headers['xi-api-key'].substring(0, 5)}...` : 'not set'
+    });
+    return headers;
+  }
+
+  private async testApiKey() {
+    console.log('Starting API key test...');
+    try {
+      // Try user endpoint
+      console.log('Testing user endpoint...');
+      const userResponse = await axios.get(`${ELEVEN_LABS_API_URL}/user`, {
+        headers: this.getHeaders(),
+      });
+      console.log('User endpoint test successful:', userResponse.data);
+
+      // Try voices endpoint
+      console.log('Testing voices endpoint...');
+      const voicesResponse = await axios.get(`${ELEVEN_LABS_API_URL}/voices`, {
+        headers: this.getHeaders(),
+      });
+      console.log('Voices endpoint test successful:', {
+        voiceCount: voicesResponse.data.voices?.length
+      });
+
+    } catch (error) {
+      console.error('API Key test failed:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        response: axios.isAxiosError(error) ? {
+          status: error.response?.status,
+          data: error.response?.data,
+          headers: error.response?.headers
+        } : null,
+        requestConfig: axios.isAxiosError(error) ? {
+          url: error.config?.url,
+          method: error.config?.method,
+          headers: {
+            ...error.config?.headers,
+            'xi-api-key': 'REDACTED'
+          }
+        } : null
+      });
+    }
   }
 
   private async handleError(error: unknown): Promise<never> {
@@ -58,6 +124,17 @@ export class ElevenLabsService {
       const status = error.response?.status;
       const details = error.response?.data?.detail || error.message;
       
+      // Log the full request configuration
+      console.log('Full request details:', {
+        url: error.config?.url,
+        method: error.config?.method,
+        headers: {
+          ...error.config?.headers,
+          'xi-api-key': error.config?.headers?.['xi-api-key'] ? 
+            `${error.config.headers['xi-api-key'].substring(0, 5)}...` : 'not set'
+        }
+      });
+
       const elevenlabsError = new Error(
         `ElevenLabs API Error: ${details}`
       ) as ElevenLabsError;
@@ -100,10 +177,51 @@ export class ElevenLabsService {
 
   async getVoices(): Promise<Voice[]> {
     return this.retryOperation(async () => {
-      const response = await axios.get(`${ELEVEN_LABS_API_URL}/voices`, {
-        headers: this.headers,
+      // First get user info to determine subscription tier
+      console.log('Getting user info with headers:', {
+        'xi-api-key': this.apiKey ? `${this.apiKey.substring(0, 5)}...` : 'not set'
       });
-      return response.data.voices;
+      const userResponse = await axios.get(`${ELEVEN_LABS_API_URL}/user`, {
+        headers: this.getHeaders(),
+      });
+      const userTier = userResponse.data.subscription?.tier || 'free';
+      console.log('User tier:', userTier);
+
+      // Then get voices
+      console.log('Getting voices with headers:', {
+        'xi-api-key': this.apiKey ? `${this.apiKey.substring(0, 5)}...` : 'not set'
+      });
+      const voicesResponse = await axios.get(`${ELEVEN_LABS_API_URL}/voices`, {
+        headers: this.getHeaders(),
+      });
+
+      console.log('All voices:', voicesResponse.data.voices.map((v: Voice) => ({
+        id: v.voice_id,
+        name: v.name,
+        tiers: v.available_for_tiers
+      })));
+
+      // Filter voices based on availability for user's tier
+      const filteredVoices = voicesResponse.data.voices.filter((voice: Voice & { available_for_tiers?: string[] }) => {
+        const isAvailable = !voice.available_for_tiers || 
+                          voice.available_for_tiers.length === 0 || 
+                          voice.available_for_tiers.includes(userTier);
+        
+        console.log(`Voice ${voice.name} (${voice.voice_id}):`, {
+          tiers: voice.available_for_tiers,
+          userTier,
+          isAvailable
+        });
+        
+        return isAvailable;
+      });
+
+      console.log('Filtered voices:', filteredVoices.map((v: Voice) => ({
+        id: v.voice_id,
+        name: v.name
+      })));
+
+      return filteredVoices;
     });
   }
 
@@ -129,13 +247,31 @@ export class ElevenLabsService {
 
   async previewVoice(voiceId: string): Promise<ArrayBuffer> {
     return this.retryOperation(async () => {
+      // First verify the voice is available for our tier
+      const voices = await this.getVoices();
+      const voice = voices.find(v => v.voice_id === voiceId);
+      if (!voice) {
+        throw new Error(`Voice ${voiceId} is not available for your subscription tier`);
+      }
+
+      console.log('Attempting to fetch preview for voice:', {
+        id: voice.voice_id,
+        name: voice.name,
+        apiKey: this.apiKey ? `${this.apiKey.substring(0, 5)}...` : 'not set'
+      });
+
+      // Use the ElevenLabs API endpoint with minimal headers
       const response = await axios.get(
         `${ELEVEN_LABS_API_URL}/voices/${voiceId}/preview`,
         {
-          headers: this.headers,
-          responseType: 'arraybuffer',
+          headers: {
+            'xi-api-key': this.apiKey
+          },
+          responseType: 'arraybuffer'
         }
       );
+
+      console.log('Preview fetch successful, response size:', response.data.byteLength);
       return response.data;
     });
   }
@@ -162,7 +298,7 @@ export class ElevenLabsService {
         `${ELEVEN_LABS_API_URL}/text-to-speech/${this.voiceId}/stream`,
         payload,
         {
-          headers: this.headers,
+          headers: this.getHeaders(),
           responseType: 'stream',
         }
       );
@@ -229,7 +365,17 @@ export class ElevenLabsService {
   ): Promise<void> {
     try {
       const audioContext = new AudioContext();
+      
+      // Resume audio context if it's suspended (browser autoplay policy)
+      if (audioContext.state === 'suspended') {
+        console.log('Resuming audio context...');
+        await audioContext.resume();
+      }
+      
+      console.log('Decoding audio data...');
       const audioBuffer = await audioContext.decodeAudioData(audioData);
+      console.log('Audio data decoded, duration:', audioBuffer.duration);
+      
       const source = audioContext.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(audioContext.destination);
@@ -241,10 +387,12 @@ export class ElevenLabsService {
         source.addEventListener('ended', onEnd);
       }
       
+      console.log('Starting audio playback...');
       source.start(0);
     } catch (error) {
+      console.error('Audio playback error:', error);
       if (onError && error instanceof Error) {
-        onError(error);
+        onError(new Error(`Audio playback failed: ${error.message}`));
       }
       throw error;
     }

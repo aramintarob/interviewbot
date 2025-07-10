@@ -1,9 +1,9 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import Home from './pages/Home';
-import Interview from './pages/Interview';
-import NotFound from './pages/NotFound';
+import { Home } from './pages/Home';
+import { Interview } from './pages/Interview';
+import { NotFound } from './pages/NotFound';
 
-function App() {
+export function App() {
   return (
     <Router>
       <div className="min-h-screen bg-gray-50">
@@ -16,5 +16,3 @@ function App() {
     </Router>
   );
 }
-
-export default App;

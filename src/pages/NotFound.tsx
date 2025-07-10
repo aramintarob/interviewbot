@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 
-const NotFound = () => {
+export function NotFound() {
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-50">
       <div className="text-center">
@@ -15,6 +15,4 @@ const NotFound = () => {
       </div>
     </div>
   );
-};
-
-export default NotFound; 
+} 

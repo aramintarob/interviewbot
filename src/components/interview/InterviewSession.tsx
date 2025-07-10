@@ -1,188 +1,199 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { ElevenLabsService } from '@/services/elevenLabsService';
-import { StorageService } from '@/services/storageService';
-import { AudioService } from '@/services/audioService';
-import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { questionService } from '@/services/questionService';
+import { Question, QuestionSequence } from '@/types/questions';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 
 interface InterviewSessionProps {
   elevenLabsService: ElevenLabsService;
   selectedVoiceId: string;
 }
 
-export function InterviewSession({
-  elevenLabsService,
-  selectedVoiceId,
-}: InterviewSessionProps) {
-  const [isStarted, setIsStarted] = useState(false);
-  const [currentQuestion, setCurrentQuestion] = useState(0);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const audioService = useRef(new AudioService());
-  const storageService = useRef(new StorageService());
-
-  // Mock questions for now - will be replaced with actual API integration
-  const questions = [
-    "Tell me about your experience with React.",
-    "What are your thoughts on TypeScript?",
-    "How do you handle state management in your applications?",
-  ];
+export function InterviewSession({ elevenLabsService, selectedVoiceId }: InterviewSessionProps) {
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string>();
+  const [currentSequence, setCurrentSequence] = useState<QuestionSequence>();
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [isAnswering, setIsAnswering] = useState(false);
 
   useEffect(() => {
-    const initializeAudio = async () => {
-      try {
-        await audioService.current.initializeAudio();
-      } catch (err) {
-        console.error('Failed to initialize audio:', err);
-        setError('Failed to initialize audio. Please check your microphone permissions.');
-      }
-    };
-
-    initializeAudio();
-    return () => {
-      audioService.current.cleanup();
-    };
+    initializeSession();
   }, []);
 
-  const startInterview = async () => {
-    try {
-      setIsStarted(true);
-      await speakQuestion(questions[0]);
-      startRecording();
-    } catch (err) {
-      setError('Failed to start interview');
-      console.error('Error starting interview:', err);
+  async function createSampleQuestions() {
+    const sampleQuestions = [
+      {
+        text: 'Tell me about yourself and your background in software development.',
+        type: 'behavioral' as const,
+        difficulty: 'easy' as const,
+        category: 'introduction',
+        expectedDuration: 180,
+        tags: ['introduction', 'background'],
+      },
+      {
+        text: 'What is your experience with React and TypeScript?',
+        type: 'technical' as const,
+        difficulty: 'medium' as const,
+        category: 'technical',
+        expectedDuration: 240,
+        tags: ['react', 'typescript', 'frontend'],
+      },
+      {
+        text: 'Describe a challenging project you worked on and how you overcame obstacles.',
+        type: 'behavioral' as const,
+        difficulty: 'medium' as const,
+        category: 'experience',
+        expectedDuration: 300,
+        tags: ['problem-solving', 'teamwork'],
+      },
+    ];
+
+    const questions: Question[] = [];
+    for (const question of sampleQuestions) {
+      try {
+        const newQuestion = await questionService.addQuestion(question);
+        questions.push(newQuestion);
+      } catch (error) {
+        console.error('Error adding sample question:', error);
+      }
     }
-  };
+    return questions;
+  }
 
-  const startRecording = async () => {
+  async function initializeSession() {
     try {
-      await audioService.current.startRecording();
-      setIsRecording(true);
-    } catch (err) {
-      console.error('Failed to start recording:', err);
-      setError('Failed to start recording. Please check your microphone permissions.');
-    }
-  };
+      setIsLoading(true);
+      setError(undefined);
 
-  const stopRecording = async () => {
-    try {
-      const audioBlob = await audioService.current.stopRecording();
-      setIsRecording(false);
-
-      // Upload the recording
-      // Note: In a real app, you'd get the userId from your auth system
-      const tempUserId = 'test-user';
-      const metadata = {
-        questionIndex: currentQuestion,
-        questionText: questions[currentQuestion],
-        timestamp: new Date().toISOString(),
-      };
-
-      await storageService.current.uploadRecording(audioBlob, tempUserId, metadata);
-    } catch (err) {
-      console.error('Failed to stop recording:', err);
-      setError('Failed to save recording');
-    }
-  };
-
-  const speakQuestion = async (text: string) => {
-    try {
-      setIsProcessing(true);
-      const audioStream = await elevenLabsService.textToSpeech(text);
-      await ElevenLabsService.playAudioStream(
-        audioStream,
-        () => setIsProcessing(false),
-        () => {
-          console.log('Question finished playing');
-        },
-        (error) => {
-          console.error('Error playing question:', error);
-          setError('Failed to play question audio');
-          setIsProcessing(false);
+      // First, get all available questions
+      let questions = await questionService.getAllQuestions();
+      
+      // If no questions exist, create some sample questions
+      if (questions.length === 0) {
+        questions = await createSampleQuestions();
+        if (questions.length === 0) {
+          throw new Error('Failed to create sample questions. Please try again or add questions manually.');
         }
-      );
-    } catch (err) {
-      console.error('Error speaking question:', err);
-      setError('Failed to speak question');
-      setIsProcessing(false);
+      }
+
+      // Create a default sequence with all questions
+      const sequence = await questionService.createSequence({
+        name: 'Default Interview Session',
+        description: 'A default interview session with all available questions',
+        questions,
+        difficulty: 'medium', // Default difficulty
+        totalDuration: questions.reduce((total, q) => total + q.expectedDuration, 0),
+        categories: Array.from(new Set(questions.map(q => q.category))),
+        tags: Array.from(new Set(questions.flatMap(q => q.tags))),
+      });
+
+      setCurrentSequence(sequence);
+      setCurrentQuestionIndex(0);
+    } catch (error) {
+      console.error('Error initializing session:', error);
+      setError(error instanceof Error ? error.message : 'Failed to initialize interview session');
+    } finally {
+      setIsLoading(false);
     }
-  };
+  }
 
-  const handleNextQuestion = async () => {
-    if (currentQuestion < questions.length - 1) {
-      // Stop current recording
-      await stopRecording();
-
-      // Move to next question
-      const nextQuestion = currentQuestion + 1;
-      setCurrentQuestion(nextQuestion);
-
-      // Speak next question and start new recording
-      await speakQuestion(questions[nextQuestion]);
-      startRecording();
-    } else {
-      // Interview complete
-      await stopRecording();
-      setIsStarted(false);
-      // You might want to redirect or show a completion screen here
+  async function handleNextQuestion() {
+    if (!currentSequence) return;
+    
+    if (currentQuestionIndex < currentSequence.questions.length - 1) {
+      setCurrentQuestionIndex(prev => prev + 1);
     }
-  };
+  }
 
-  if (!isStarted) {
+  async function handleStartAnswering() {
+    setIsAnswering(true);
+    // TODO: Start recording
+  }
+
+  async function handleStopAnswering() {
+    setIsAnswering(false);
+    // TODO: Stop recording and process answer
+  }
+
+  if (isLoading) {
     return (
-      <div className="text-center">
-        <h2 className="text-2xl font-bold mb-4">Ready to Begin</h2>
-        <p className="mb-6">
-          The interview will consist of {questions.length} questions. Your responses will be recorded.
-        </p>
-        <button
-          onClick={startInterview}
-          disabled={isProcessing}
-          className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-        >
-          {isProcessing ? 'Starting...' : 'Start Interview'}
-        </button>
-      </div>
+      <Card>
+        <CardContent className="py-6">
+          <div className="flex justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          </div>
+        </CardContent>
+      </Card>
     );
   }
 
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="py-6">
+          <div className="text-center text-red-500">
+            <p>{error}</p>
+            <Button onClick={initializeSession} className="mt-4">
+              Retry
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!currentSequence || currentSequence.questions.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-6">
+          <div className="text-center">
+            <p>No questions available. Please add some questions first.</p>
+            <Button onClick={initializeSession} className="mt-4">
+              Create Sample Questions
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const currentQuestion = currentSequence.questions[currentQuestionIndex];
+
   return (
     <div className="space-y-6">
-      <div className="p-6 bg-white rounded-lg shadow">
-        <h3 className="text-lg font-medium mb-2">Question {currentQuestion + 1}</h3>
-        <p className="text-gray-700">{questions[currentQuestion]}</p>
-        
-        {isRecording && (
-          <div className="mt-4 flex items-center justify-center text-sm text-gray-500">
-            <LoadingSpinner className="w-4 h-4 mr-2" />
-            Recording in progress...
+      <Card>
+        <CardHeader>
+          <CardTitle>Question {currentQuestionIndex + 1} of {currentSequence.questions.length}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <p className="text-lg">{currentQuestion.text}</p>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span>{currentQuestion.type}</span>
+              <span>•</span>
+              <span>{currentQuestion.category}</span>
+              <span>•</span>
+              <span>{Math.round(currentQuestion.expectedDuration / 60)} min</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <Button
+                variant="outline"
+                onClick={handleNextQuestion}
+                disabled={currentQuestionIndex === currentSequence.questions.length - 1}
+              >
+                Next Question
+              </Button>
+              <Button
+                onClick={isAnswering ? handleStopAnswering : handleStartAnswering}
+                variant={isAnswering ? "destructive" : "default"}
+              >
+                {isAnswering ? "Stop Recording" : "Start Recording"}
+              </Button>
+            </div>
           </div>
-        )}
-      </div>
-
-      {error && (
-        <div className="p-4 bg-red-50 text-red-700 rounded-lg">
-          {error}
-          <button
-            onClick={() => setError(null)}
-            className="ml-4 text-sm underline hover:no-underline"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      <div className="flex justify-between">
-        <button
-          onClick={handleNextQuestion}
-          disabled={currentQuestion >= questions.length - 1 || isProcessing}
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-        >
-          {currentQuestion >= questions.length - 1 ? 'Complete Interview' : 'Next Question'}
-        </button>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 } 

@@ -51,6 +51,11 @@ export function VoiceSelector({
       setIsLoading(true);
       setError('');
       const availableVoices = await elevenLabsService.getVoices();
+      console.log('Available voices:', availableVoices.map(v => ({
+        name: v.name,
+        id: v.voice_id,
+        category: v.category
+      })));
       setVoices(availableVoices);
       
       // Set default voice
@@ -76,21 +81,34 @@ export function VoiceSelector({
     try {
       setIsPlaying(true);
       setError('');
+      console.log('Fetching preview for voice:', selectedVoice);
       const previewAudio = await elevenLabsService.previewVoice(selectedVoice);
+      console.log('Preview audio received, length:', previewAudio.byteLength);
       
       await ElevenLabsService.playAudioBuffer(
         previewAudio,
-        () => setIsPlaying(true),
-        () => setIsPlaying(false),
+        () => {
+          console.log('Audio playback started');
+          setIsPlaying(true);
+        },
+        () => {
+          console.log('Audio playback completed');
+          setIsPlaying(false);
+        },
         (error: Error) => {
-          console.error('Error playing preview:', error);
-          setError('Failed to play voice preview');
+          console.error('Detailed playback error:', error);
+          setError(`Failed to play voice preview: ${error.message}`);
           setIsPlaying(false);
         }
       );
     } catch (err) {
-      console.error('Error playing voice preview:', err);
-      setError('Failed to play voice preview');
+      console.error('Error in playVoicePreview:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to play voice preview';
+      // Make error message more user-friendly
+      const userMessage = errorMessage.includes('not available for your subscription tier')
+        ? 'This voice is not available on your current subscription plan. Please choose a different voice or upgrade your plan.'
+        : errorMessage;
+      setError(userMessage);
       setIsPlaying(false);
     }
   }
