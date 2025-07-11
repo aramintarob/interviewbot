@@ -1,85 +1,103 @@
 import { useEffect, useRef } from 'react';
-import type { AudioVisualizationData } from '../../services/audioService';
 
-interface VolumeVisualizerProps {
-  data: AudioVisualizationData;
-  width?: number;
-  height?: number;
+export interface VolumeVisualizerProps {
+  isRecording: boolean;
 }
 
-export function VolumeVisualizer({ 
-  data, 
-  width = 300, 
-  height = 60 
-}: VolumeVisualizerProps) {
+export function VolumeVisualizer({ isRecording }: VolumeVisualizerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationFrameRef = useRef<number>();
+  const analyserRef = useRef<AnalyserNode>();
+  const dataArrayRef = useRef<Uint8Array>();
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    let stream: MediaStream | null = null;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    async function setupAudioContext() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        
+        analyserRef.current = analyser;
+        dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
+        
+        if (isRecording) {
+          startVisualization();
+        }
+      } catch (error) {
+        console.error('Error accessing microphone:', error);
+      }
+    }
 
-    // Clear canvas
-    ctx.clearRect(0, 0, width, height);
+    function startVisualization() {
+      if (!canvasRef.current || !analyserRef.current || !dataArrayRef.current) return;
 
-    // Draw volume bar
-    const barWidth = width * 0.8; // 80% of canvas width
-    const barHeight = height * 0.4; // 40% of canvas height
-    const x = (width - barWidth) / 2;
-    const y = (height - barHeight) / 2;
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-    // Background bar
-    ctx.fillStyle = '#e5e7eb'; // gray-200
-    ctx.fillRect(x, y, barWidth, barHeight);
-
-    // Volume level
-    ctx.fillStyle = '#3b82f6'; // blue-500
-    ctx.fillRect(x, y, barWidth * data.volume, barHeight);
-
-    // Draw frequency visualization
-    if (data.frequency) {
-      const frequencyWidth = width * 0.8;
-      const frequencyHeight = height * 0.2;
-      const frequencyX = (width - frequencyWidth) / 2;
-      const frequencyY = height * 0.8;
-
-      // Normalize and sample frequency data
-      const frequencyData = Array.from(data.frequency);
-      const samples = 20; // Number of frequency bars to show
-      const sampledData = [];
-      const sampleSize = Math.floor(frequencyData.length / samples);
-
-      for (let i = 0; i < samples; i++) {
-        const start = i * sampleSize;
-        const end = start + sampleSize;
-        const sampleAvg = frequencyData
-          .slice(start, end)
-          .reduce((a, b) => a + b, 0) / sampleSize;
-        sampledData.push(Math.min(1, Math.max(0, (sampleAvg + 140) / 70))); // Normalize from dB to 0-1
+      function draw() {
+        if (!analyserRef.current || !dataArrayRef.current || !ctx) return;
+        
+        const WIDTH = canvas.width;
+        const HEIGHT = canvas.height;
+        
+        analyserRef.current.getByteFrequencyData(dataArrayRef.current);
+        
+        ctx.fillStyle = 'rgb(20, 20, 20)';
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        
+        const barWidth = (WIDTH / dataArrayRef.current.length) * 2.5;
+        let barHeight;
+        let x = 0;
+        
+        for (let i = 0; i < dataArrayRef.current.length; i++) {
+          barHeight = (dataArrayRef.current[i] / 255) * HEIGHT;
+          
+          const hue = (i / dataArrayRef.current.length) * 360;
+          ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+          ctx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
+          
+          x += barWidth + 1;
+        }
+        
+        animationFrameRef.current = requestAnimationFrame(draw);
       }
 
-      // Draw frequency bars
-      const barSpacing = 2;
-      const barW = (frequencyWidth - (samples - 1) * barSpacing) / samples;
-
-      ctx.fillStyle = '#60a5fa'; // blue-400
-      sampledData.forEach((value, i) => {
-        const barH = value * frequencyHeight;
-        const barX = frequencyX + i * (barW + barSpacing);
-        const barY = frequencyY + frequencyHeight - barH;
-        ctx.fillRect(barX, barY, barW, barH);
-      });
+      draw();
     }
-  }, [data, width, height]);
+
+    function stopVisualization() {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    }
+
+    if (isRecording) {
+      setupAudioContext();
+    } else {
+      stopVisualization();
+    }
+
+    return () => {
+      stopVisualization();
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [isRecording]);
 
   return (
     <canvas
       ref={canvasRef}
-      width={width}
-      height={height}
-      className="rounded-lg bg-white shadow-sm"
+      width={300}
+      height={100}
+      className="rounded-lg bg-background border"
     />
   );
 } 

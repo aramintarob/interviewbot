@@ -1,234 +1,148 @@
-import { createClient } from '@supabase/supabase-js';
-import { Question, QuestionSequence } from '@/types/questions';
-
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
+import { Question, NewQuestion, QuestionSequence, NewQuestionSequence, BranchingCondition } from '@/types/questions';
+import { supabase } from '@/lib/supabase';
 
 class QuestionService {
-  private logError(method: string, error: any) {
-    console.error(`QuestionService.${method} error:`, {
-      message: error?.message,
-      details: error?.details,
-      hint: error?.hint,
-      code: error?.code,
-      response: {
-        status: error?.response?.status,
-        statusText: error?.response?.statusText,
-        data: error?.response?.data,
-      },
-    });
-  }
-
   async getAllQuestions(): Promise<Question[]> {
-    try {
-      console.log('Fetching all questions...');
-      const { data, error } = await supabase
-        .from('questions')
-        .select('*')
-        .order('createdAt', { ascending: false });
+    const { data, error } = await supabase
+      .from('questions')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-      if (error) {
-        this.logError('getAllQuestions', error);
-        throw new Error(`Failed to fetch questions: ${error.message}`);
-      }
-
-      console.log('Successfully fetched questions:', data?.length);
-      return data || [];
-    } catch (error) {
-      this.logError('getAllQuestions', error);
+    if (error) {
+      console.error('Error fetching questions:', error);
       throw new Error('Failed to fetch questions');
     }
+
+    return data || [];
   }
 
-  async getQuestionById(id: string): Promise<Question | null> {
-    try {
-      console.log('Fetching question by ID:', id);
-      const { data, error } = await supabase
-        .from('questions')
-        .select('*')
-        .eq('id', id)
-        .single();
+  async getQuestion(id: string): Promise<Question | undefined> {
+    const { data, error } = await supabase
+      .from('questions')
+      .select('*, followUpQuestions:questions(*), branchingConditions(*)')
+      .eq('id', id)
+      .single();
 
-      if (error) {
-        this.logError('getQuestionById', error);
-        throw new Error(`Failed to fetch question: ${error.message}`);
-      }
-
-      console.log('Successfully fetched question:', data?.id);
-      return data;
-    } catch (error) {
-      this.logError('getQuestionById', error);
+    if (error) {
+      console.error('Error fetching question:', error);
       throw new Error('Failed to fetch question');
     }
+
+    return data;
   }
 
-  async addQuestion(question: Omit<Question, 'id' | 'createdAt' | 'updatedAt'>): Promise<Question> {
-    try {
-      console.log('Adding new question:', question);
-      const { data, error } = await supabase
-        .from('questions')
-        .insert([{
-          ...question,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }])
-        .select()
-        .single();
+  async addQuestion(question: NewQuestion): Promise<Question> {
+    const { data, error } = await supabase
+      .from('questions')
+      .insert([question])
+      .select()
+      .single();
 
-      if (error) {
-        this.logError('addQuestion', error);
-        throw new Error(`Failed to add question: ${error.message}`);
-      }
-
-      console.log('Successfully added question:', data?.id);
-      return data;
-    } catch (error) {
-      this.logError('addQuestion', error);
+    if (error) {
+      console.error('Error adding question:', error);
       throw new Error('Failed to add question');
     }
+
+    return data;
   }
 
-  async updateQuestion(id: string, updates: Partial<Question>): Promise<Question> {
-    try {
-      console.log('Updating question:', { id, updates });
-      const { data, error } = await supabase
-        .from('questions')
-        .update({
-          ...updates,
-          updatedAt: new Date().toISOString(),
-        })
-        .eq('id', id)
-        .select()
-        .single();
+  async updateQuestion(id: string, question: Partial<Question>): Promise<Question> {
+    const { data, error } = await supabase
+      .from('questions')
+      .update(question)
+      .eq('id', id)
+      .select()
+      .single();
 
-      if (error) {
-        this.logError('updateQuestion', error);
-        throw new Error(`Failed to update question: ${error.message}`);
-      }
-
-      console.log('Successfully updated question:', data?.id);
-      return data;
-    } catch (error) {
-      this.logError('updateQuestion', error);
+    if (error) {
+      console.error('Error updating question:', error);
       throw new Error('Failed to update question');
     }
+
+    return data;
   }
 
   async deleteQuestion(id: string): Promise<void> {
-    try {
-      console.log('Deleting question:', id);
-      const { error } = await supabase
-        .from('questions')
-        .delete()
-        .eq('id', id);
+    const { error } = await supabase
+      .from('questions')
+      .delete()
+      .eq('id', id);
 
-      if (error) {
-        this.logError('deleteQuestion', error);
-        throw new Error(`Failed to delete question: ${error.message}`);
-      }
-
-      console.log('Successfully deleted question:', id);
-    } catch (error) {
-      this.logError('deleteQuestion', error);
+    if (error) {
+      console.error('Error deleting question:', error);
       throw new Error('Failed to delete question');
     }
   }
 
-  async getAllSequences(): Promise<QuestionSequence[]> {
-    try {
-      console.log('Fetching all sequences...');
-      const { data, error } = await supabase
-        .from('question_sequences')
-        .select(`
-          *,
-          questions:question_sequence_items(
-            question:questions(*)
-          )
-        `)
-        .order('createdAt', { ascending: false });
+  async createSequence(sequence: NewQuestionSequence): Promise<QuestionSequence> {
+    const { data, error } = await supabase
+      .from('question_sequences')
+      .insert([sequence])
+      .select()
+      .single();
 
-      if (error) {
-        this.logError('getAllSequences', error);
-        throw new Error(`Failed to fetch sequences: ${error.message}`);
-      }
-
-      console.log('Successfully fetched sequences:', data?.length);
-      return (data || []).map((sequence: any) => ({
-        ...sequence,
-        questions: sequence.questions.map((item: any) => item.question),
-        totalDuration: sequence.questions.reduce((total: number, item: any) => 
-          total + item.question.expectedDuration, 0),
-        categories: Array.from(new Set(sequence.questions.map((item: any) => 
-          item.question.category))),
-        tags: Array.from(new Set(sequence.questions.flatMap((item: any) => 
-          item.question.tags))),
-      }));
-    } catch (error) {
-      this.logError('getAllSequences', error);
-      throw new Error('Failed to fetch sequences');
-    }
-  }
-
-  async createSequence(sequence: Omit<QuestionSequence, 'id' | 'createdAt' | 'updatedAt'>): Promise<QuestionSequence> {
-    try {
-      console.log('Creating new sequence:', sequence);
-      const { data: sequenceData, error: sequenceError } = await supabase
-        .from('question_sequences')
-        .insert([{
-          name: sequence.name,
-          description: sequence.description,
-          difficulty: sequence.difficulty,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }])
-        .select()
-        .single();
-
-      if (sequenceError) {
-        this.logError('createSequence', sequenceError);
-        throw new Error(`Failed to create sequence: ${sequenceError.message}`);
-      }
-
-      console.log('Successfully created sequence:', sequenceData?.id);
-
-      // Add questions to the sequence
-      const questionItems = sequence.questions.map((question, index) => ({
-        sequence_id: sequenceData.id,
-        question_id: question.id,
-        order: index,
-      }));
-
-      console.log('Adding questions to sequence:', questionItems);
-      const { error: itemsError } = await supabase
-        .from('question_sequence_items')
-        .insert(questionItems);
-
-      if (itemsError) {
-        this.logError('createSequence', itemsError);
-        // Cleanup the sequence if adding questions failed
-        await supabase
-          .from('question_sequences')
-          .delete()
-          .eq('id', sequenceData.id);
-        throw new Error(`Failed to add questions to sequence: ${itemsError.message}`);
-      }
-
-      console.log('Successfully added questions to sequence');
-
-      // Return the complete sequence
-      return {
-        ...sequenceData,
-        questions: sequence.questions,
-        totalDuration: sequence.questions.reduce((total, q) => total + q.expectedDuration, 0),
-        categories: Array.from(new Set(sequence.questions.map(q => q.category))),
-        tags: Array.from(new Set(sequence.questions.flatMap(q => q.tags))),
-      };
-    } catch (error) {
-      this.logError('createSequence', error);
+    if (error) {
+      console.error('Error creating sequence:', error);
       throw new Error('Failed to create sequence');
     }
+
+    return data;
+  }
+
+  async getNextQuestion(currentQuestionId: string, response: string): Promise<Question | undefined> {
+    // Get current question with branching conditions
+    const currentQuestion = await this.getQuestion(currentQuestionId);
+    if (!currentQuestion?.branchingConditions?.length) {
+      return undefined;
+    }
+
+    // Check each branching condition
+    for (const condition of currentQuestion.branchingConditions) {
+      switch (condition.type) {
+        case 'keyword':
+          if (typeof condition.value === 'string' && response.toLowerCase().includes(condition.value.toLowerCase())) {
+            return this.getQuestion(condition.nextQuestionId);
+          }
+          break;
+
+        case 'sentiment':
+          // TODO: Implement sentiment analysis
+          // For now, use a simple positive/negative check
+          const isPositive = response.toLowerCase().includes('yes') || 
+                           response.toLowerCase().includes('good') ||
+                           response.toLowerCase().includes('great');
+          if ((condition.value === 'positive' && isPositive) ||
+              (condition.value === 'negative' && !isPositive)) {
+            return this.getQuestion(condition.nextQuestionId);
+          }
+          break;
+
+        case 'duration':
+          const duration = parseInt(condition.value as string);
+          if (!isNaN(duration) && response.length > duration) {
+            return this.getQuestion(condition.nextQuestionId);
+          }
+          break;
+      }
+    }
+
+    // If no conditions match, return undefined to proceed with default sequence
+    return undefined;
+  }
+
+  async getSequence(id: string): Promise<QuestionSequence | undefined> {
+    const { data, error } = await supabase
+      .from('question_sequences')
+      .select('*, questions(*)')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      console.error('Error fetching sequence:', error);
+      throw new Error('Failed to fetch sequence');
+    }
+
+    return data;
   }
 }
 

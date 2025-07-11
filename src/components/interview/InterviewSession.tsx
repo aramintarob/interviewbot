@@ -1,34 +1,43 @@
 import { useState, useEffect } from 'react';
 import { ElevenLabsService } from '@/services/elevenLabsService';
 import { questionService } from '@/services/questionService';
-import { Question, QuestionSequence } from '@/types/questions';
+import { Question, QuestionSequence, NewQuestion, NewQuestionSequence } from '@/types/questions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { useAudioRecording } from '@/hooks/useAudioRecording';
+import { VolumeVisualizer } from '@/components/audio/VolumeVisualizer';
+import { Badge } from '@/components/ui/badge';
 
 interface InterviewSessionProps {
   elevenLabsService: ElevenLabsService;
-  selectedVoiceId: string;
+  isTestMode?: boolean;
 }
 
-export function InterviewSession({ elevenLabsService, selectedVoiceId }: InterviewSessionProps) {
+export function InterviewSession({ elevenLabsService, isTestMode = false }: InterviewSessionProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [currentSequence, setCurrentSequence] = useState<QuestionSequence>();
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [isAnswering, setIsAnswering] = useState(false);
+  const [isSessionActive, setIsSessionActive] = useState(false);
+  const [isAsking, setIsAsking] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const { startRecording, stopRecording, pauseRecording, resumeRecording, isRecording } = useAudioRecording();
 
   useEffect(() => {
     initializeSession();
+    return () => {
+      elevenLabsService.clearConversation();
+    };
   }, []);
 
   async function createSampleQuestions() {
-    const sampleQuestions = [
+    const sampleQuestions: NewQuestion[] = [
       {
         text: 'Tell me about yourself and your background in software development.',
         type: 'behavioral' as const,
         difficulty: 'easy' as const,
         category: 'introduction',
-        expectedDuration: 180,
+        expected_duration: 180,
         tags: ['introduction', 'background'],
       },
       {
@@ -36,7 +45,7 @@ export function InterviewSession({ elevenLabsService, selectedVoiceId }: Intervi
         type: 'technical' as const,
         difficulty: 'medium' as const,
         category: 'technical',
-        expectedDuration: 240,
+        expected_duration: 240,
         tags: ['react', 'typescript', 'frontend'],
       },
       {
@@ -44,7 +53,7 @@ export function InterviewSession({ elevenLabsService, selectedVoiceId }: Intervi
         type: 'behavioral' as const,
         difficulty: 'medium' as const,
         category: 'experience',
-        expectedDuration: 300,
+        expected_duration: 300,
         tags: ['problem-solving', 'teamwork'],
       },
     ];
@@ -66,28 +75,41 @@ export function InterviewSession({ elevenLabsService, selectedVoiceId }: Intervi
       setIsLoading(true);
       setError(undefined);
 
-      // First, get all available questions
-      let questions = await questionService.getAllQuestions();
+      let questions: Question[] = [];
       
-      // If no questions exist, create some sample questions
-      if (questions.length === 0) {
+      if (isTestMode) {
+        // In test mode, always use sample questions
         questions = await createSampleQuestions();
         if (questions.length === 0) {
-          throw new Error('Failed to create sample questions. Please try again or add questions manually.');
+          throw new Error('Failed to create sample questions. Please try again.');
+        }
+      } else {
+        // In regular mode, try to get existing questions first
+        questions = await questionService.getAllQuestions();
+        
+        // If no questions exist, create samples
+        if (questions.length === 0) {
+          questions = await createSampleQuestions();
+          if (questions.length === 0) {
+            throw new Error('Failed to create sample questions. Please try again or add questions manually.');
+          }
         }
       }
 
-      // Create a default sequence with all questions
-      const sequence = await questionService.createSequence({
-        name: 'Default Interview Session',
-        description: 'A default interview session with all available questions',
+      // Create a sequence with the questions
+      const newSequence: NewQuestionSequence = {
+        name: isTestMode ? 'Practice Interview Session' : 'Interview Session',
+        description: isTestMode 
+          ? 'A practice session with sample interview questions'
+          : 'A default interview session with all available questions',
         questions,
-        difficulty: 'medium', // Default difficulty
-        totalDuration: questions.reduce((total, q) => total + q.expectedDuration, 0),
+        difficulty: 'medium',
+        total_duration: questions.reduce((total, q) => total + q.expected_duration, 0),
         categories: Array.from(new Set(questions.map(q => q.category))),
         tags: Array.from(new Set(questions.flatMap(q => q.tags))),
-      });
+      };
 
+      const sequence = await questionService.createSequence(newSequence);
       setCurrentSequence(sequence);
       setCurrentQuestionIndex(0);
     } catch (error) {
@@ -98,22 +120,110 @@ export function InterviewSession({ elevenLabsService, selectedVoiceId }: Intervi
     }
   }
 
-  async function handleNextQuestion() {
+  async function askCurrentQuestion() {
     if (!currentSequence) return;
     
-    if (currentQuestionIndex < currentSequence.questions.length - 1) {
-      setCurrentQuestionIndex(prev => prev + 1);
+    const question = currentSequence.questions[currentQuestionIndex];
+    setIsAsking(true);
+    
+    try {
+      // Use the chat endpoint instead of direct text-to-speech
+      const audioBuffer = await elevenLabsService.sendMessage(question.text);
+      await ElevenLabsService.playAudioBuffer(
+        audioBuffer,
+        () => console.log('Started speaking question'),
+        () => setIsAsking(false),
+        (error) => {
+          console.error('Error playing audio:', error);
+          setError('Failed to speak question. Please try again.');
+          setIsAsking(false);
+        }
+      );
+    } catch (error) {
+      console.error('Error asking question:', error);
+      setError('Failed to ask question. Please try again.');
+      setIsAsking(false);
     }
   }
 
-  async function handleStartAnswering() {
-    setIsAnswering(true);
-    // TODO: Start recording
+  async function handleNextQuestion() {
+    if (!currentSequence) return;
+    
+    // Get the current question
+    const currentQuestion = currentSequence.questions[currentQuestionIndex];
+    
+    // Check for branching logic based on the last response
+    let nextQuestion = undefined;
+    if (isRecording) {
+      const lastResponse = await stopRecording();
+      // Convert audio blob to text using your transcription service
+      // For now, we'll use a placeholder response
+      const responseText = "Yes, I have experience with that"; // TODO: Replace with actual transcription
+      nextQuestion = await questionService.getNextQuestion(currentQuestion.id, responseText);
+    }
+    
+    if (nextQuestion) {
+      // Find the index of the next question in the sequence
+      const nextIndex = currentSequence.questions.findIndex(q => q.id === nextQuestion?.id);
+      if (nextIndex !== -1) {
+        setCurrentQuestionIndex(nextIndex);
+      } else {
+        // If the next question isn't in the sequence, add it
+        const updatedSequence = {
+          ...currentSequence,
+          questions: [...currentSequence.questions, nextQuestion],
+        };
+        setCurrentSequence(updatedSequence);
+        setCurrentQuestionIndex(currentSequence.questions.length);
+      }
+    } else if (currentQuestionIndex < currentSequence.questions.length - 1) {
+      // No branching or no conditions met, proceed to next question in sequence
+      setCurrentQuestionIndex(prev => prev + 1);
+    } else if (isSessionActive) {
+      // End the session if we're on the last question
+      await handleEndSession();
+    }
+
+    // Ask the next question after a short delay
+    setTimeout(askCurrentQuestion, 1000);
   }
 
-  async function handleStopAnswering() {
-    setIsAnswering(false);
-    // TODO: Stop recording and process answer
+  async function handleStartSession() {
+    try {
+      setIsSessionActive(true);
+      setIsPaused(false);
+      await startRecording();
+      await askCurrentQuestion();
+    } catch (error) {
+      console.error('Error starting session:', error);
+      setError('Failed to start session. Please check your microphone permissions and try again.');
+      setIsSessionActive(false);
+    }
+  }
+
+  async function handlePauseSession() {
+    if (isPaused) {
+      setIsPaused(false);
+      await resumeRecording();
+    } else {
+      setIsPaused(true);
+      await pauseRecording();
+    }
+  }
+
+  async function handleEndSession() {
+    try {
+      setIsSessionActive(false);
+      setIsPaused(false);
+      const audioBlob = await stopRecording();
+      // Clear the conversation history when the session ends
+      elevenLabsService.clearConversation();
+      // TODO: Process the recorded audio (save to storage, transcribe, etc.)
+      console.log('Session recording completed:', audioBlob);
+    } catch (error) {
+      console.error('Error ending session:', error);
+      setError('Failed to end session properly. Your recording might not be saved.');
+    }
   }
 
   if (isLoading) {
@@ -159,38 +269,83 @@ export function InterviewSession({ elevenLabsService, selectedVoiceId }: Intervi
   }
 
   const currentQuestion = currentSequence.questions[currentQuestionIndex];
+  const isLastQuestion = currentQuestionIndex === currentSequence.questions.length - 1;
 
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Question {currentQuestionIndex + 1} of {currentSequence.questions.length}</CardTitle>
+          <CardTitle>
+            {isTestMode ? 'Practice Interview' : 'Interview Session'}
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            <p className="text-lg">{currentQuestion.text}</p>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <span>{currentQuestion.type}</span>
-              <span>•</span>
-              <span>{currentQuestion.category}</span>
-              <span>•</span>
-              <span>{Math.round(currentQuestion.expectedDuration / 60)} min</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <Button
-                variant="outline"
-                onClick={handleNextQuestion}
-                disabled={currentQuestionIndex === currentSequence.questions.length - 1}
-              >
-                Next Question
-              </Button>
-              <Button
-                onClick={isAnswering ? handleStopAnswering : handleStartAnswering}
-                variant={isAnswering ? "destructive" : "default"}
-              >
-                {isAnswering ? "Stop Recording" : "Start Recording"}
-              </Button>
-            </div>
+          <div className="space-y-6">
+            {isSessionActive && (
+              <>
+                <div className="bg-muted p-4 rounded-lg">
+                  <p className="text-lg font-medium mb-2">Current Question:</p>
+                  <p>{currentQuestion.text}</p>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground mt-2">
+                    <Badge variant={
+                      currentQuestion.difficulty === 'hard' ? 'destructive' :
+                      currentQuestion.difficulty === 'medium' ? 'default' :
+                      'secondary'
+                    }>
+                      {currentQuestion.difficulty}
+                    </Badge>
+                    <span>•</span>
+                    <span>{Math.round(currentQuestion.expected_duration / 60)} min</span>
+                  </div>
+                </div>
+
+                <div className="flex justify-center">
+                  <VolumeVisualizer isRecording={isRecording && !isPaused} />
+                </div>
+
+                <div className="flex justify-between items-center gap-4">
+                  <Button
+                    variant="outline"
+                    onClick={handleNextQuestion}
+                    disabled={isAsking || isLastQuestion}
+                  >
+                    {isLastQuestion ? 'Last Question' : 'Next Question'}
+                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      onClick={handlePauseSession}
+                      variant="outline"
+                    >
+                      {isPaused ? 'Resume' : 'Pause'}
+                    </Button>
+                    <Button
+                      onClick={handleEndSession}
+                      variant="destructive"
+                    >
+                      End Session
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {!isSessionActive && (
+              <div className="text-center">
+                <Button
+                  onClick={handleStartSession}
+                  className="w-full"
+                  disabled={isAsking}
+                  size="lg"
+                >
+                  Start {isTestMode ? 'Practice' : ''} Session
+                </Button>
+                <p className="text-sm text-muted-foreground mt-4">
+                  {isTestMode 
+                    ? "Click to begin your practice interview. This is a safe space to get comfortable with the format."
+                    : "Click to begin your interview. The AI interviewer will ask you questions, and your responses will be recorded."}
+                </p>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
