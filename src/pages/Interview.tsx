@@ -1,14 +1,52 @@
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InterviewSession } from '@/components/interview/InterviewSession';
-import { QuestionManager } from '@/components/interview/QuestionManager';
 import { ElevenLabsService } from '@/services/elevenLabsService';
 import { useSearchParams } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
 export default function Interview() {
   const [searchParams] = useSearchParams();
   const isTestMode = searchParams.get('mode') === 'test';
-  const elevenLabsService = new ElevenLabsService();
+  const [elevenLabsService, setElevenLabsService] = useState<ElevenLabsService>();
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    try {
+      const service = new ElevenLabsService();
+      setElevenLabsService(service);
+    } catch (err) {
+      console.error('Failed to initialize ElevenLabs service:', err);
+      setError(err instanceof Error ? err.message : 'Failed to initialize voice service');
+    }
+  }, []);
+
+  if (error) {
+    return (
+      <div className="container py-6">
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center min-h-[200px] py-6">
+            <div className="text-center text-red-500 space-y-4">
+              <p>{error}</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!elevenLabsService) {
+    return (
+      <div className="container py-6">
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center min-h-[200px] py-6">
+            <LoadingSpinner className="h-8 w-8 mb-4" />
+            <p className="text-sm text-muted-foreground">Initializing voice service...</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="container py-6">
@@ -26,23 +64,10 @@ export default function Interview() {
         </Card>
       )}
 
-      <Tabs defaultValue="session" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="session">Interview Session</TabsTrigger>
-          <TabsTrigger value="questions">Question Manager</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="session" className="mt-6">
-          <InterviewSession 
-            elevenLabsService={elevenLabsService}
-            isTestMode={isTestMode}
-          />
-        </TabsContent>
-
-        <TabsContent value="questions" className="mt-6">
-          <QuestionManager />
-        </TabsContent>
-      </Tabs>
+      <InterviewSession 
+        elevenLabsService={elevenLabsService}
+        isTestMode={isTestMode}
+      />
     </div>
   );
 } 

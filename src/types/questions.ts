@@ -10,16 +10,8 @@ export interface BranchingCondition {
 export interface Question {
   id: string;
   text: string;
-  type: QuestionType;
-  difficulty: QuestionDifficulty;
-  category: string;
-  expected_duration: number; // in seconds
-  tags: string[];
   created_at: string;
   updated_at: string;
-  followUpQuestions?: Question[];
-  branchingConditions?: BranchingCondition[];
-  parentQuestionId?: string;
 }
 
 export type NewQuestion = Omit<Question, 'id' | 'created_at' | 'updated_at'>;
@@ -28,16 +20,22 @@ export interface QuestionSequence {
   id: string;
   name: string;
   description?: string;
-  questions: Question[];
-  total_duration: number; // in seconds
   difficulty: QuestionDifficulty;
-  categories: string[];
-  tags: string[];
   created_at: string;
   updated_at: string;
+  // These will be populated by the service
+  questions?: Question[];
+  total_duration?: number;
+  categories?: string[];
+  tags?: string[];
 }
 
-export type NewQuestionSequence = Omit<QuestionSequence, 'id' | 'created_at' | 'updated_at'>;
+export type NewQuestionSequence = {
+  name: string;
+  description?: string;
+  difficulty: QuestionDifficulty;
+  questionIds: string[]; // Array of question IDs to create sequence items
+};
 
 export interface QuestionResponse {
   questionId: string;

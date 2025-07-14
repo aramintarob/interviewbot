@@ -87,6 +87,7 @@ InterviewBot is a lightweight web-based platform that facilitates automated voic
   - WebSocket support for real-time communication
 
 - **Supabase Infrastructure**
+
   - Authentication and user management
   - PostgreSQL database for structured data
   - Storage for audio files and transcripts
@@ -214,6 +215,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 # ElevenLabs Configuration
 VITE_ELEVEN_LABS_API_KEY=your_eleven_labs_key
 VITE_ELEVEN_LABS_VOICE_ID=your_voice_id
+VITE_ELEVEN_LABS_AGENT_ID=your_agent_id  # Keep this secret to prevent unauthorized usage
 
 # Security
 JWT_SECRET=your_jwt_secret
@@ -342,19 +344,19 @@ graph TD
    - Add error handling and retries
 
 ### Phase 3: Core Interview Flow
-1. **Question Management**
+1. **Question Management** - complete
    - Create question data structure
    - Implement question sequencing
    - Add basic branching logic
    - Create question preview component
 
 2. **Interview Session Component**
-   - Implement start/stop controls
+   - Implement start/stop controls - complete
    - Add progress tracking
    - Create pause/resume functionality
    - Add basic error handling
 
-3. **User Interface Enhancements**
+3. **User Interface Enhancements** - complete
    - Add progress indicators
    - Implement audio visualization
    - Create responsive layouts
@@ -367,11 +369,16 @@ graph TD
    - Add basic error handling
    - Implement CORS and security
 
-2. **WebSocket Integration**
-   - Set up WebSocket server
-   - Implement real-time communication
-   - Add reconnection handling
-   - Create message protocols
+2. **WebSocket Integration** - complete
+   - Integrate with ElevenLabs WebSocket API
+   - Implement real-time audio streaming
+   - Add connection state management
+   - Handle various message protocols:
+     - Audio streaming
+     - Agent responses
+     - Connection lifecycle
+     - Error handling
+   - Implement reconnection logic
 
 3. **AWS Integration**
    - Configure S3 for storage

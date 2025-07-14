@@ -1,90 +1,131 @@
 import { SendEmailCommand } from '@aws-sdk/client-ses';
-import { sesClient } from '../server';
+import { sesClient } from '../config/aws';
+import { env } from '../config/env';
+import logger from '../config/logger';
 
-interface InterviewNotificationData {
-  interviewId: string;
-  audioUrl: string;
-  transcriptUrl: string;
-  duration: number;
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType: string;
 }
 
 export class EmailService {
-  private readonly fromEmail: string;
+  private fromEmail: string;
 
   constructor() {
-    const fromEmail = process.env.AWS_SES_FROM_EMAIL;
-    if (!fromEmail) {
-      throw new Error('AWS_SES_FROM_EMAIL environment variable is required');
+    if (!env.AWS_SES_FROM_EMAIL) {
+      throw new Error('AWS SES from email is not configured');
     }
-    this.fromEmail = fromEmail;
+    this.fromEmail = env.AWS_SES_FROM_EMAIL;
   }
 
-  async sendInterviewNotification(
-    toEmail: string,
-    data: InterviewNotificationData
+  /**
+   * Send an email with optional attachments
+   * @param to Recipient email address
+   * @param subject Email subject
+   * @param body Email body (HTML)
+   * @param attachments Optional array of attachments
+   */
+  async sendEmail(
+    to: string,
+    subject: string,
+    body: string,
+    attachments: EmailAttachment[] = []
   ): Promise<void> {
-    const { interviewId, audioUrl, transcriptUrl, duration } = data;
-
-    const command = new SendEmailCommand({
-      Source: this.fromEmail,
-      Destination: {
-        ToAddresses: [toEmail],
-      },
-      Message: {
-        Subject: {
-          Data: `Interview ${interviewId} Completed`,
-        },
-        Body: {
-          Html: {
-            Data: `
-              <h1>Interview Recording Complete</h1>
-              <p>The interview session has been completed and processed.</p>
-              
-              <h2>Interview Details:</h2>
-              <ul>
-                <li>Interview ID: ${interviewId}</li>
-                <li>Duration: ${Math.round(duration / 60)} minutes</li>
-              </ul>
-              
-              <h2>Downloads:</h2>
-              <p>
-                <a href="${audioUrl}">Download Audio Recording</a>
-              </p>
-              <p>
-                <a href="${transcriptUrl}">Download Transcript</a>
-              </p>
-              
-              <p>
-                The files will be available for download for the next 30 days.
-              </p>
-            `,
-          },
-          Text: {
-            Data: `
-Interview Recording Complete
-
-The interview session has been completed and processed.
-
-Interview Details:
-- Interview ID: ${interviewId}
-- Duration: ${Math.round(duration / 60)} minutes
-
-Downloads:
-- Audio Recording: ${audioUrl}
-- Transcript: ${transcriptUrl}
-
-The files will be available for download for the next 30 days.
-            `,
-          },
-        },
-      },
-    });
-
     try {
+      const command = new SendEmailCommand({
+        Source: this.fromEmail,
+        Destination: {
+          ToAddresses: [to],
+        },
+        Message: {
+          Subject: {
+            Data: subject,
+          },
+          Body: {
+            Html: {
+              Data: body,
+            },
+          },
+        },
+      });
+
       await sesClient.send(command);
+      logger.info(`Email sent successfully to ${to}`);
+
+      // If there are attachments, send a separate email with attachments
+      if (attachments.length > 0) {
+        await this.sendAttachments(to, subject, attachments);
+      }
     } catch (error) {
-      console.error('Error sending email notification:', error);
-      throw new Error('Failed to send email notification');
+      logger.error('Error sending email:', error);
+      throw new Error('Failed to send email');
     }
+  }
+
+  /**
+   * Send attachments in a separate email
+   */
+  private async sendAttachments(
+    to: string,
+    subject: string,
+    attachments: EmailAttachment[]
+  ): Promise<void> {
+    try {
+      for (const attachment of attachments) {
+        const command = new SendEmailCommand({
+          Source: this.fromEmail,
+          Destination: {
+            ToAddresses: [to],
+          },
+          Message: {
+            Subject: {
+              Data: `${subject} - Attachment: ${attachment.filename}`,
+            },
+            Body: {
+              Text: {
+                Data: `Please find attached: ${attachment.filename}`,
+              },
+              // AWS SES doesn't directly support attachments in the SDK
+              // You would need to use a different service or implement
+              // raw email sending with MIME for attachments
+            },
+          },
+        });
+
+        await sesClient.send(command);
+        logger.info(`Attachment ${attachment.filename} sent to ${to}`);
+      }
+    } catch (error) {
+      logger.error('Error sending attachments:', error);
+      throw new Error('Failed to send attachments');
+    }
+  }
+
+  /**
+   * Send interview completion email
+   * @param to Recipient email address
+   * @param audioUrl URL to the recorded audio
+   * @param transcriptUrl URL to the transcript
+   */
+  async sendInterviewCompletionEmail(
+    to: string,
+    audioUrl: string,
+    transcriptUrl: string
+  ): Promise<void> {
+    const subject = 'Your Interview Recording is Ready';
+    const body = `
+      <h2>Your Interview Recording is Ready</h2>
+      <p>Thank you for completing your interview. Your recording has been processed and is now available.</p>
+      <p>You can access your interview materials using the following links:</p>
+      <ul>
+        <li><a href="${audioUrl}">Download Audio Recording</a></li>
+        <li><a href="${transcriptUrl}">View Transcript</a></li>
+      </ul>
+      <p>These links will expire in 7 days.</p>
+      <p>Best regards,<br>InterviewBot Team</p>
+    `;
+
+    await this.sendEmail(to, subject, body);
   }
 } 

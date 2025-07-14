@@ -46,25 +46,58 @@ export function VolumeVisualizer({ isRecording }: VolumeVisualizerProps) {
         
         const WIDTH = canvas.width;
         const HEIGHT = canvas.height;
+        const centerX = WIDTH / 2;
+        const centerY = HEIGHT / 2;
+        const radius = Math.min(WIDTH, HEIGHT) / 2.5;
         
         analyserRef.current.getByteFrequencyData(dataArrayRef.current);
         
-        ctx.fillStyle = 'rgb(20, 20, 20)';
-        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        // Clear the canvas
+        ctx.clearRect(0, 0, WIDTH, HEIGHT);
         
-        const barWidth = (WIDTH / dataArrayRef.current.length) * 2.5;
-        let barHeight;
-        let x = 0;
+        // Draw circular visualizer
+        const barCount = 180;
+        const angleStep = (2 * Math.PI) / barCount;
         
-        for (let i = 0; i < dataArrayRef.current.length; i++) {
-          barHeight = (dataArrayRef.current[i] / 255) * HEIGHT;
+        for (let i = 0; i < barCount; i++) {
+          const angle = i * angleStep;
           
-          const hue = (i / dataArrayRef.current.length) * 360;
-          ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
-          ctx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
+          // Get frequency value and normalize it
+          const frequencyIndex = Math.floor((i / barCount) * dataArrayRef.current.length);
+          const value = dataArrayRef.current[frequencyIndex];
+          const normalizedValue = value / 255.0;
           
-          x += barWidth + 1;
+          // Calculate bar height based on frequency value
+          const minHeight = radius * 0.75;
+          const maxHeight = radius * 1.25;
+          const barHeight = minHeight + (maxHeight - minHeight) * normalizedValue;
+          
+          // Calculate start and end points
+          const startX = centerX + Math.cos(angle) * radius;
+          const startY = centerY + Math.sin(angle) * radius;
+          const endX = centerX + Math.cos(angle) * (radius + barHeight * 0.5);
+          const endY = centerY + Math.sin(angle) * (radius + barHeight * 0.5);
+          
+          // Draw the bar
+          ctx.beginPath();
+          ctx.moveTo(startX, startY);
+          ctx.lineTo(endX, endY);
+          
+          // Create gradient color based on frequency
+          const hue = (i / barCount) * 360;
+          ctx.strokeStyle = isRecording 
+            ? `hsla(${hue}, 80%, 60%, ${normalizedValue})`
+            : `hsla(200, 20%, 50%, 0.1)`;
+          ctx.lineWidth = 2;
+          ctx.stroke();
         }
+        
+        // Draw inner circle
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius * 0.7, 0, 2 * Math.PI);
+        ctx.strokeStyle = isRecording ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.1)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
         
         animationFrameRef.current = requestAnimationFrame(draw);
       }
@@ -95,9 +128,9 @@ export function VolumeVisualizer({ isRecording }: VolumeVisualizerProps) {
   return (
     <canvas
       ref={canvasRef}
-      width={300}
-      height={100}
-      className="rounded-lg bg-background border"
+      width={400}
+      height={400}
+      className="rounded-full bg-transparent"
     />
   );
 } 

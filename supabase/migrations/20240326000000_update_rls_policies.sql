@@ -28,4 +28,10 @@ CREATE POLICY "Allow public write access"
 CREATE POLICY "Allow public write access"
   ON question_sequence_items FOR INSERT
   TO anon
-  WITH CHECK (true); 
+  WITH CHECK (true);
+
+-- Allow public delete access for development
+CREATE POLICY "Allow public delete access"
+  ON questions FOR DELETE
+  TO anon
+  USING (true); 

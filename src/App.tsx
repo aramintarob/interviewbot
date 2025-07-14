@@ -1,18 +1,11 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { Home } from './pages/Home';
-import Interview from './pages/Interview';
-import { NotFound } from './pages/NotFound';
+import { Outlet } from 'react-router-dom';
 
-export default function App() {
+function App() {
   return (
-    <Router>
-      <div className="min-h-screen bg-background">
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/interview" element={<Interview />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </div>
-    </Router>
+    <div className="min-h-screen bg-background">
+      <Outlet />
+    </div>
   );
 }
+
+export default App;
