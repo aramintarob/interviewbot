@@ -1,7 +1,7 @@
 # InterviewBot - AI-Powered Expert Interview Platform
 
 ## Product Overview
-InterviewBot is a lightweight web-based platform that facilitates automated voice interviews between an AI interviewer and subject matter experts. The platform uses ElevenLabs for voice synthesis and transcription, creating a natural conversational experience while capturing valuable expert knowledge through automated interviews. Each interview is conducted with a consistent AI voice personality, allowing for follow-up questions and branching conversation paths based on responses.
+InterviewBot is a lightweight web-based platform that facilitates automated voice interviews between an AI interviewer and subject matter experts. The platform uses the official ElevenLabs SDK for voice synthesis and transcription, creating a natural conversational experience while capturing valuable expert knowledge through automated interviews. Each interview is conducted with a consistent AI voice personality, allowing for follow-up questions and branching conversation paths based on responses.
 
 ## Core Features
 
@@ -16,13 +16,14 @@ InterviewBot is a lightweight web-based platform that facilitates automated voic
 - Low volume handling (approximately 5 interviews per month)
 
 ### 2. Voice Interaction
-- Real-time voice synthesis using ElevenLabs
+- Real-time voice synthesis using ElevenLabs SDK
+- Built-in volume controls and audio visualization
 - Consistent voice personality across all interviews
 - Natural conversation flow with:
   - Dynamic follow-up questions
   - Branching dialogue paths
   - Appropriate pausing and turn-taking
-- Voice selection via ElevenLabs options
+- Voice selection via ElevenLabs SDK
 
 ### 3. Recording & Transcription
 - High-quality audio recording of entire interview
@@ -50,16 +51,15 @@ InterviewBot is a lightweight web-based platform that facilitates automated voic
 - **Framework & Core Technologies**
   - React.js with TypeScript for type safety
   - Vite for build tooling and development
-  - TailwindCSS for styling
-  - React Router for navigation
+  - TailwindCSS with Shadcn UI components
+  - React Router v6 with Data Router API
+  - ElevenLabs SDK for voice synthesis
 
 - **Audio Processing**
-  - WebRTC for real-time audio streaming
-  - MediaRecorder API for local audio recording
-  - Web Audio API for:
-    - Audio visualization
-    - Volume level monitoring
-    - Background noise detection
+  - ElevenLabs SDK for real-time audio streaming
+  - Built-in volume controls and visualization
+  - Background noise detection
+  - Audio quality monitoring
 
 - **State Management**
   - React Context for global state
@@ -117,11 +117,12 @@ InterviewBot is a lightweight web-based platform that facilitates automated voic
 
 ### APIs & External Services
 - **ElevenLabs Integration**
-  - Voice synthesis API implementation
-  - Voice ID management
-  - Error handling and retry logic
+  - Official ElevenLabs SDK implementation
+  - Built-in voice synthesis and streaming
+  - Automatic error handling and retries
   - Rate limit monitoring
-  - Backup voice configurations
+  - Volume control and audio visualization
+  - WebSocket management handled by SDK
 
 - **Supabase Integration**
   - Storage bucket management
@@ -193,14 +194,7 @@ GET    /api/audio/:id           // Get processed audio
 POST   /api/transcripts/generate // Generate transcript
 ```
 
-### Development Environment
-- **Required Tools**
-  - Node.js v18+
-  - npm or yarn
-  - Git
-  - TypeScript 5.0+
-
-- **Environment Variables**
+### Environment Variables
 ```bash
 # Server Configuration
 PORT=3000
@@ -214,12 +208,6 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
 # ElevenLabs Configuration
 VITE_ELEVEN_LABS_API_KEY=your_eleven_labs_key
-VITE_ELEVEN_LABS_VOICE_ID=your_voice_id
-VITE_ELEVEN_LABS_AGENT_ID=your_agent_id  # Keep this secret to prevent unauthorized usage
-
-# Security
-JWT_SECRET=your_jwt_secret
-CORS_ORIGINS=http://localhost:5173
 ```
 
 ### Deployment Pipeline
@@ -324,24 +312,24 @@ graph TD
 - NotFound page
 - Loading spinner
 
-### Phase 2: Audio Foundation (Current Focus)
+### Phase 2: Audio Foundation (Completed)
 1. **Audio Recording Implementation** - complete
-   - Complete AudioService testing
-   - Add volume visualization
+   - Integrated ElevenLabs SDK
+   - Built-in volume visualization
    - Implement pause/resume functionality
-   - Add audio format conversion utilities
+   - Real-time audio streaming
 
 2. **Audio Setup Component** - complete
    - Implement microphone testing
-   - Add volume level display
+   - Add volume level display and controls
    - Create test recording feature
    - Add audio playback verification
 
 3. **ElevenLabs Integration** - complete
-   - Complete voice synthesis service
-   - Test voice selection
-   - Implement streaming playback
-   - Add error handling and retries
+   - Implemented official ElevenLabs SDK
+   - Built-in voice synthesis and streaming
+   - Automatic error handling and retries
+   - Volume control and visualization
 
 ### Phase 3: Core Interview Flow
 1. **Question Management** - complete
@@ -363,24 +351,20 @@ graph TD
    - Add loading states
 
 ### Phase 4: Backend Infrastructure
-1. **Express Server Setup**
+1. **Express Server Setup** - complete
    - Configure Express with TypeScript
    - Set up development environment
    - Add basic error handling
    - Implement CORS and security
 
-2. **WebSocket Integration** - complete
-   - Integrate with ElevenLabs WebSocket API
-   - Implement real-time audio streaming
-   - Add connection state management
-   - Handle various message protocols:
-     - Audio streaming
-     - Agent responses
-     - Connection lifecycle
-     - Error handling
-   - Implement reconnection logic
+2. **ElevenLabs SDK Integration** - complete
+   - Integrated official ElevenLabs SDK
+   - Real-time audio streaming with built-in WebSocket support
+   - Automatic connection state management
+   - Built-in error handling and retries
+   - Volume control and visualization
 
-3. **AWS Integration**
+3. **AWS Integration** - complete
    - Configure S3 for storage
    - Set up SES for emails
    - Implement file upload

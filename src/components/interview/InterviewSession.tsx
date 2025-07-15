@@ -1,15 +1,13 @@
-import { useState, useEffect } from 'react';
-import { ElevenLabsService } from '@/services/elevenLabsService';
+import { useState, useEffect, useRef } from 'react';
+import { ConversationService } from '@/services/conversationService';
 import { questionService } from '@/services/questionService';
 import { Question } from '@/types/questions';
 import { Button } from '@/components/ui/button';
-import { useAudioRecording } from '@/hooks/useAudioRecording';
 import { VolumeVisualizer } from '@/components/audio/VolumeVisualizer';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Mic, PauseCircle, PlayCircle, StopCircle } from 'lucide-react';
 
 interface InterviewSessionProps {
-  elevenLabsService: ElevenLabsService;
   isTestMode?: boolean;
 }
 
@@ -32,7 +30,7 @@ function QuestionsList({ questions }: { questions: Question[] }) {
   );
 }
 
-export function InterviewSession({ elevenLabsService, isTestMode = false }: InterviewSessionProps) {
+export function InterviewSession({ isTestMode = false }: InterviewSessionProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -40,12 +38,17 @@ export function InterviewSession({ elevenLabsService, isTestMode = false }: Inte
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [isAsking, setIsAsking] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
-  const { startRecording, stopRecording, pauseRecording, resumeRecording, isRecording } = useAudioRecording();
+  const [visualizationData, setVisualizationData] = useState({
+    volume: 0,
+    frequency: new Uint8Array()
+  });
+
+  const conversationRef = useRef<ConversationService | null>(null);
 
   useEffect(() => {
     initializeSession();
     return () => {
-      elevenLabsService.clearConversation();
+      conversationRef.current?.endConversation().catch(console.error);
     };
   }, []);
 
@@ -104,32 +107,15 @@ export function InterviewSession({ elevenLabsService, isTestMode = false }: Inte
   }
 
   async function askCurrentQuestion() {
-    if (!questions.length) return;
+    if (!questions.length || !conversationRef.current) return;
     
     const question = questions[currentQuestionIndex];
     setIsAsking(true);
     
     try {
       console.log('Asking question:', question.text);
-      const audioBuffer = await elevenLabsService.sendMessage(question.text);
-      console.log('Received audio buffer, playing...');
-      
-      await ElevenLabsService.playAudioBuffer(
-        audioBuffer,
-        () => {
-          console.log('Started speaking question');
-          setIsAsking(true);
-        },
-        () => {
-          console.log('Finished speaking question');
-          setIsAsking(false);
-        },
-        (error) => {
-          console.error('Error playing audio:', error);
-          setError('Failed to speak question. Please try again.');
-          setIsAsking(false);
-        }
-      );
+      // The SDK will handle audio playback internally
+      await conversationRef.current.initialize();
     } catch (error) {
       console.error('Error asking question:', error);
       setError('Failed to ask question. Please try again.');
@@ -139,10 +125,6 @@ export function InterviewSession({ elevenLabsService, isTestMode = false }: Inte
 
   async function handleNextQuestion() {
     if (!questions.length) return;
-    
-    if (isRecording) {
-      await stopRecording();
-    }
     
     if (currentQuestionIndex < (questions.length - 1)) {
       setCurrentQuestionIndex(prev => prev + 1);
@@ -154,21 +136,35 @@ export function InterviewSession({ elevenLabsService, isTestMode = false }: Inte
 
   async function handleStartSession() {
     try {
-      // Initialize audio context by playing a silent audio buffer
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const buffer = audioContext.createBuffer(1, 1, 22050);
-      const source = audioContext.createBufferSource();
-      source.buffer = buffer;
-      source.connect(audioContext.destination);
-      source.start();
-      
-      setIsSessionActive(true);
-      setIsPaused(false);
-      await startRecording();
-      
-      // Add a small delay to ensure audio context is properly initialized
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
+      // Initialize the conversation service with callbacks
+      const conversation = new ConversationService({
+        onConnect: () => {
+          setIsSessionActive(true);
+          setIsPaused(false);
+        },
+        onDisconnect: () => {
+          setIsSessionActive(false);
+          setIsPaused(false);
+        },
+        onError: (error) => {
+          setError(error.message);
+          setIsSessionActive(false);
+        },
+        onMessage: (message) => {
+          console.log('Received message:', message);
+        },
+        onModeChange: (mode) => {
+          setIsAsking(mode === 'speaking');
+        },
+        onVisualizationData: (data) => {
+          setVisualizationData({
+            volume: data.inputVolume,
+            frequency: data.inputFrequency
+          });
+        }
+      });
+
+      conversationRef.current = conversation;
       await askCurrentQuestion();
     } catch (error) {
       console.error('Error starting session:', error);
@@ -178,27 +174,32 @@ export function InterviewSession({ elevenLabsService, isTestMode = false }: Inte
   }
 
   async function handlePauseSession() {
-    if (isPaused) {
-      setIsPaused(false);
-      await resumeRecording();
-    } else {
-      setIsPaused(true);
-      await pauseRecording();
+    if (!conversationRef.current) return;
+
+    try {
+      if (isPaused) {
+        setIsPaused(false);
+        await conversationRef.current.initialize();
+      } else {
+        setIsPaused(true);
+        await conversationRef.current.endConversation();
+      }
+    } catch (error) {
+      console.error('Error toggling pause:', error);
+      setError('Failed to pause/resume session');
     }
   }
 
   async function handleEndSession() {
     try {
+      if (conversationRef.current) {
+        await conversationRef.current.endConversation();
+      }
       setIsSessionActive(false);
       setIsPaused(false);
-      const audioBlob = await stopRecording();
-      // Clear the conversation history when the session ends
-      elevenLabsService.clearConversation();
-      // TODO: Process the recorded audio (save to storage, transcribe, etc.)
-      console.log('Session recording completed:', audioBlob);
     } catch (error) {
       console.error('Error ending session:', error);
-      setError('Failed to end session properly. Your recording might not be saved.');
+      setError('Failed to end session properly.');
     }
   }
 
@@ -242,55 +243,32 @@ export function InterviewSession({ elevenLabsService, isTestMode = false }: Inte
         <div className="relative">
           {/* Audio Visualizer */}
           <div className="flex items-center justify-center">
-            <VolumeVisualizer isRecording={isRecording && !isPaused} />
+            <VolumeVisualizer data={visualizationData} />
           </div>
 
           {/* Center Button or Controls */}
           <div className="absolute inset-0 flex items-center justify-center">
             {!isSessionActive ? (
-              <div className="flex flex-col items-center gap-8">
-                <Button
-                  onClick={handleStartSession}
-                  className="bg-black text-white hover:bg-black/90 rounded-full px-8 py-6 text-lg font-medium flex items-center gap-2"
-                  size="lg"
-                  disabled={isAsking}
-                >
-                  <Mic className="h-5 w-5" />
-                  Start Interview
-                </Button>
-                <p className="text-sm text-muted-foreground">
-                  Powered by{' '}
-                  <a
-                    href="https://elevenlabs.io"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline hover:text-foreground"
-                  >
-                    ElevenLabs Conversational AI
-                  </a>
-                </p>
-              </div>
+              <Button
+                onClick={handleStartSession}
+                size="lg"
+                className="rounded-full w-16 h-16 bg-blue-600 hover:bg-blue-700 text-white shadow-lg"
+              >
+                <Mic className="h-6 w-6" />
+              </Button>
             ) : (
-              <div className="flex items-center gap-4">
+              <div className="flex items-center space-x-4">
                 <Button
                   onClick={handlePauseSession}
-                  variant="outline"
                   size="lg"
-                  className="rounded-full"
-                  disabled={isAsking}
+                  className="rounded-full w-16 h-16 bg-blue-600 hover:bg-blue-700 text-white shadow-lg"
                 >
-                  {isPaused ? (
-                    <PlayCircle className="h-6 w-6" />
-                  ) : (
-                    <PauseCircle className="h-6 w-6" />
-                  )}
+                  {isPaused ? <PlayCircle className="h-6 w-6" /> : <PauseCircle className="h-6 w-6" />}
                 </Button>
                 <Button
                   onClick={handleEndSession}
-                  variant="destructive"
                   size="lg"
-                  className="rounded-full"
-                  disabled={isAsking}
+                  className="rounded-full w-16 h-16 bg-red-600 hover:bg-red-700 text-white shadow-lg"
                 >
                   <StopCircle className="h-6 w-6" />
                 </Button>
@@ -299,19 +277,19 @@ export function InterviewSession({ elevenLabsService, isTestMode = false }: Inte
           </div>
         </div>
 
-        {/* Question Display */}
-        {questions.length > 0 && (
-          <div className="mt-8 w-full">
-            <div className="text-left mb-2">
-              <span className="text-sm font-medium text-muted-foreground">
-                Question {currentQuestionIndex + 1} of {questions.length}
-              </span>
-            </div>
-            <div className="bg-white/80 backdrop-blur-sm p-6 rounded-lg shadow-sm">
-              <p className="text-lg font-medium">{questions[currentQuestionIndex].text}</p>
-            </div>
-          </div>
-        )}
+        {/* Current Question Display */}
+        <div className="mt-8 w-full">
+          <h3 className="text-lg font-semibold mb-2">Current Question</h3>
+          {questions[currentQuestionIndex] && (
+            <p className="text-gray-700">{questions[currentQuestionIndex].text}</p>
+          )}
+        </div>
+
+        {/* Questions List */}
+        <div className="mt-8 w-full">
+          <h3 className="text-lg font-semibold mb-2">All Questions</h3>
+          <QuestionsList questions={questions} />
+        </div>
       </div>
     </div>
   );

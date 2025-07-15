@@ -5,7 +5,6 @@ import App from './App';
 import { Home } from './pages/Home';
 import Interview from './pages/Interview';
 import { NotFound } from './pages/NotFound';
-import { QuestionEditor } from './components/admin/QuestionEditor';
 import './index.css';
 
 const router = createBrowserRouter([
@@ -20,10 +19,6 @@ const router = createBrowserRouter([
       {
         path: 'interview',
         element: <Interview />,
-      },
-      {
-        path: 'admin/questions',
-        element: <QuestionEditor />,
       },
       {
         path: '*',

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ElevenLabsService } from '@/services/elevenLabsService';
+import { ConversationService } from '@/services/conversationService';
 
 interface Voice {
   voice_id: string;
@@ -30,13 +30,21 @@ export function VoiceSelector({ selectedVoiceId, onVoiceSelect }: VoiceSelectorP
     try {
       setIsLoading(true);
       setError(undefined);
-      const elevenLabsService = new ElevenLabsService();
-      const availableVoices = await elevenLabsService.getVoices();
-      setVoices(availableVoices);
       
-      // Auto-select the first voice if none is selected
-      if (!selectedVoiceId && availableVoices.length > 0) {
-        onVoiceSelect(availableVoices[0].voice_id);
+      // Note: The new SDK doesn't provide voice selection yet
+      // We'll use the default voice for now
+      const defaultVoice = {
+        voice_id: import.meta.env.VITE_ELEVEN_LABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM',
+        name: 'Default Voice',
+        preview_url: '',
+        category: 'default'
+      };
+      
+      setVoices([defaultVoice]);
+      
+      // Auto-select the default voice
+      if (!selectedVoiceId) {
+        onVoiceSelect(defaultVoice.voice_id);
       }
     } catch (error) {
       console.error('Error loading voices:', error);
@@ -79,10 +87,13 @@ export function VoiceSelector({ selectedVoiceId, onVoiceSelect }: VoiceSelectorP
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Select Voice</CardTitle>
+        <CardTitle>Voice Settings</CardTitle>
       </CardHeader>
       <CardContent>
-        <Select value={selectedVoiceId} onValueChange={onVoiceSelect}>
+        <p className="text-sm text-muted-foreground mb-4">
+          Using default voice for the interview. Voice selection will be available in a future update.
+        </p>
+        <Select value={selectedVoiceId} onValueChange={onVoiceSelect} disabled>
           <SelectTrigger>
             <SelectValue placeholder="Select a voice" />
           </SelectTrigger>
