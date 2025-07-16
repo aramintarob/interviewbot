@@ -1,36 +1,48 @@
-import { useEffect, useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface TranscriptDisplayProps {
-  transcript: string;
+  currentQuestion?: string;
   className?: string;
 }
 
-export function TranscriptDisplay({ transcript, className = '' }: TranscriptDisplayProps) {
+export function TranscriptDisplay({ 
+  currentQuestion = '',
+  className = '' 
+}: TranscriptDisplayProps) {
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
 
-  // Auto-scroll to bottom when transcript updates
-  useEffect(() => {
-    if (transcriptRef.current) {
-      transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
-    }
-  }, [transcript]);
+  // Handle manual scroll to disable auto-scroll
+  const handleScroll = () => {
+    if (!transcriptRef.current) return;
+    
+    const { scrollTop, scrollHeight, clientHeight } = transcriptRef.current;
+    const isAtBottom = Math.abs(scrollHeight - clientHeight - scrollTop) < 50;
+    setShouldAutoScroll(isAtBottom);
+  };
 
   return (
     <Card className={`${className} bg-white/90 backdrop-blur-sm`}>
       <CardHeader>
-        <CardTitle className="text-lg font-semibold">Interview Transcript</CardTitle>
+        <CardTitle className="text-lg font-semibold">Current Question</CardTitle>
       </CardHeader>
       <CardContent>
         <div 
           ref={transcriptRef}
-          className="h-[200px] overflow-y-auto space-y-2 text-sm"
+          onScroll={handleScroll}
+          className="h-[400px] overflow-y-auto space-y-2 text-sm font-mono"
         >
-          {transcript.split('\n').map((line, index) => (
-            <p key={index} className="leading-relaxed">
-              {line || <br />}
+          {/* Current question */}
+          {currentQuestion ? (
+            <p className="text-blue-600 font-medium border-l-4 border-blue-600 pl-2">
+              Interviewer: {currentQuestion}
             </p>
-          ))}
+          ) : (
+            <p className="text-gray-400 text-center">
+              Questions will appear here during the interview
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>

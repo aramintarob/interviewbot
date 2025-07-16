@@ -1,15 +1,13 @@
-import { Conversation } from '@elevenlabs/client';
-import { Question } from '@/types/questions';
+import { Conversation, Role, Mode } from '@elevenlabs/client';
 
 interface ConversationCallbacks {
   onConnect?: () => void;
   onDisconnect?: () => void;
-  onMessage?: (message: string) => void;
-  onError?: (error: Error) => void;
+  onMessage?: (message: { message: string; source: Role }) => void;
+  onError?: (error: Error | string) => void;
   onStatusChange?: (status: 'connected' | 'connecting' | 'disconnected') => void;
-  onModeChange?: (mode: 'speaking' | 'listening') => void;
+  onModeChange?: (mode: { mode: Mode }) => void;
   onVisualizationData?: (data: { inputVolume: number; outputVolume: number; inputFrequency: Uint8Array; outputFrequency: Uint8Array }) => void;
-  onTranscriptUpdate?: (transcript: string) => void;
 }
 
 export class ConversationService {
@@ -20,7 +18,9 @@ export class ConversationService {
   private isInitializing: boolean = false;
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 3;
-  private transcriptBuffer: string = '';
+  private isPaused: boolean = false;
+  private audioContext: AudioContext | null = null;
+  private mediaStream: MediaStream | null = null;
 
   constructor(callbacks?: ConversationCallbacks) {
     if (callbacks) {
@@ -30,134 +30,72 @@ export class ConversationService {
 
   async initialize(): Promise<void> {
     if (this.isInitializing) {
-      console.log('Already initializing, skipping...');
+      console.log('Already initializing...');
       return;
-    }
-
-    if (this.conversation) {
-      console.log('Cleaning up existing conversation...');
-      await this.endConversation();
     }
 
     try {
       this.isInitializing = true;
-      this.reconnectAttempts = 0;
-      console.log('Starting initialization...');
 
       // Request microphone access first
-      await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.audioContext = new AudioContext();
 
-      // Initialize conversation with ElevenLabs
+      // Initialize ElevenLabs conversation
+      const agentId = import.meta.env.VITE_ELEVEN_LABS_AGENT_ID;
+
+      if (!agentId) {
+        throw new Error('ElevenLabs Agent ID not found');
+      }
+
+      // Start the conversation session
       this.conversation = await Conversation.startSession({
-        agentId: import.meta.env.VITE_ELEVEN_LABS_AGENT_ID,
+        agentId,
         onConnect: () => {
-          console.log('Connected to ElevenLabs');
-          this.reconnectAttempts = 0;
           this.callbacks.onConnect?.();
           this.callbacks.onStatusChange?.('connected');
           this.startVisualizationUpdates();
         },
         onDisconnect: () => {
-          console.log('Disconnected from ElevenLabs');
+          this.callbacks.onDisconnect?.();
+          this.callbacks.onStatusChange?.('disconnected');
           this.stopVisualizationUpdates();
-          
-          // Attempt to reconnect if we haven't exceeded max attempts
-          if (this.reconnectAttempts < this.maxReconnectAttempts) {
-            console.log(`Attempting to reconnect (attempt ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts})...`);
-            this.reconnectAttempts++;
-            this.initialize().catch(console.error);
-          } else {
-            console.log('Max reconnection attempts reached');
-            this.conversation = null;
-            this.callbacks.onDisconnect?.();
-            this.callbacks.onStatusChange?.('disconnected');
-          }
         },
-        onMessage: (message: any) => {
-          console.log('Received message:', message);
-          
-          // Handle different message types from the SDK
-          let text = '';
-          if (typeof message === 'string') {
-            text = message;
-          } else if (message.message) {
-            text = message.message;
-          }
-
-          if (text) {
-            // Update transcript buffer
-            if (this.transcriptBuffer) {
-              this.transcriptBuffer += '\n';
-            }
-            this.transcriptBuffer += text;
-            
-            // Notify callbacks
-            this.callbacks.onMessage?.(text);
-            this.callbacks.onTranscriptUpdate?.(this.transcriptBuffer);
-          }
+        onMessage: (message) => {
+          this.callbacks.onMessage?.(message);
         },
-        onError: (error: any) => {
-          console.error('ElevenLabs error:', error);
-          // Only end conversation on fatal errors
-          if (error instanceof Error && error.message.includes('fatal')) {
-            this.endConversation().catch(console.error);
-          }
-          this.callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
+        onError: (error) => {
+          this.callbacks.onError?.(error);
         },
-        onModeChange: (modeData: any) => {
-          console.log('Mode changed:', modeData);
-          // Convert SDK mode to our mode type
-          const mode = typeof modeData === 'string' ? modeData : modeData.mode;
-          if (mode === 'speaking' || mode === 'listening') {
-            this.callbacks.onModeChange?.(mode);
-          }
+        onModeChange: (mode) => {
+          this.callbacks.onModeChange?.(mode);
         }
       });
 
-      // Set initial volume
-      await this.setVolume(this.volume);
-      console.log('Initialization complete');
-    } catch (error) {
-      console.error('Initialization error:', error);
-      await this.endConversation();
-      throw error;
-    } finally {
       this.isInitializing = false;
+    } catch (error) {
+      this.isInitializing = false;
+      console.error('Error initializing conversation:', error);
+      throw error;
     }
   }
 
-  async endConversation(): Promise<void> {
-    console.log('Ending conversation...');
-    this.stopVisualizationUpdates();
-    this.reconnectAttempts = this.maxReconnectAttempts; // Prevent reconnection attempts
-    this.transcriptBuffer = '';
-    
-    if (this.conversation) {
-      try {
-        await this.conversation.endSession();
-      } catch (error) {
-        console.error('Error ending conversation:', error);
-      }
-      this.conversation = null;
-    }
-  }
-
-  private startVisualizationUpdates(): void {
-    if (this.visualizationInterval) {
-      clearInterval(this.visualizationInterval);
-    }
+  private startVisualizationUpdates() {
+    if (this.visualizationInterval) return;
 
     this.visualizationInterval = setInterval(async () => {
-      if (!this.conversation) {
-        this.stopVisualizationUpdates();
-        return;
-      }
+      if (!this.conversation) return;
 
       try {
-        const inputVolume = await this.conversation.getInputVolume();
-        const outputVolume = await this.conversation.getOutputVolume();
-        const inputFrequency = await this.conversation.getInputByteFrequencyData();
-        const outputFrequency = await this.conversation.getOutputByteFrequencyData();
+        const [inputVolume, outputVolume] = await Promise.all([
+          this.conversation.getInputVolume(),
+          this.conversation.getOutputVolume()
+        ]);
+
+        const [inputFrequency, outputFrequency] = await Promise.all([
+          this.conversation.getInputByteFrequencyData(),
+          this.conversation.getOutputByteFrequencyData()
+        ]);
 
         this.callbacks.onVisualizationData?.({
           inputVolume,
@@ -167,32 +105,99 @@ export class ConversationService {
         });
       } catch (error) {
         console.error('Error getting visualization data:', error);
-        this.stopVisualizationUpdates();
       }
-    }, 100); // Update every 100ms
+    }, 100);
   }
 
-  private stopVisualizationUpdates(): void {
+  private stopVisualizationUpdates() {
     if (this.visualizationInterval) {
       clearInterval(this.visualizationInterval);
       this.visualizationInterval = null;
     }
   }
 
-  async setVolume(volume: number): Promise<void> {
-    if (!this.conversation) {
-      throw new Error('Conversation not initialized');
+  async endConversation(): Promise<Blob | null> {
+    try {
+      if (this.conversation) {
+        await this.conversation.endSession();
+        this.conversation = null;
+      }
+
+      // Clean up audio resources
+      if (this.audioContext) {
+        await this.audioContext.close();
+        this.audioContext = null;
+      }
+
+      if (this.mediaStream) {
+        this.mediaStream.getTracks().forEach(track => track.stop());
+        this.mediaStream = null;
+      }
+
+      this.stopVisualizationUpdates();
+      return null; // The SDK handles the audio recording internally
+    } catch (error) {
+      console.error('Error ending conversation:', error);
+      throw new Error('Failed to end conversation properly');
     }
-
-    this.volume = Math.max(0, Math.min(1, volume));
-    await this.conversation.setVolume({ volume: this.volume });
   }
 
-  getVolume(): number {
-    return this.volume;
+  async setVolume(value: number): Promise<void> {
+    this.volume = Math.max(0, Math.min(1, value));
+    if (this.conversation) {
+      await this.conversation.setVolume({ volume: this.volume });
+    }
   }
 
-  getId(): string | null {
-    return this.conversation?.getId() ?? null;
+  async pause(): Promise<void> {
+    if (!this.conversation || this.isPaused) return;
+    
+    try {
+      // Suspend audio context to pause audio processing
+      if (this.audioContext) {
+        await this.audioContext.suspend();
+      }
+
+      // Stop media tracks to pause microphone input
+      if (this.mediaStream) {
+        this.mediaStream.getTracks().forEach(track => track.enabled = false);
+      }
+
+      // Stop visualization updates
+      this.stopVisualizationUpdates();
+
+      this.isPaused = true;
+    } catch (error) {
+      console.error('Error pausing conversation:', error);
+      throw new Error('Failed to pause conversation');
+    }
+  }
+
+  async resume(): Promise<void> {
+    if (!this.conversation || !this.isPaused) return;
+    
+    try {
+      // Resume audio context
+      if (this.audioContext) {
+        await this.audioContext.resume();
+      }
+
+      // Re-enable media tracks to resume microphone input
+      if (this.mediaStream) {
+        this.mediaStream.getTracks().forEach(track => track.enabled = true);
+      }
+
+      // Restart visualization updates
+      this.startVisualizationUpdates();
+
+      this.isPaused = false;
+    } catch (error) {
+      console.error('Error resuming conversation:', error);
+      throw new Error('Failed to resume conversation');
+    }
+  }
+
+  isPausedState(): boolean {
+    return this.isPaused;
   }
 } 
