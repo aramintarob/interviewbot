@@ -46,7 +46,7 @@ export class InterviewStorageService {
       if (!bucketExists) {
         const { error } = await supabase.storage.createBucket(this.bucketName, {
           public: false,
-          fileSizeLimit: 104857600, // 100MB limit
+          fileSizeLimit: 10485760, // 10MB limit
           allowedMimeTypes: ['audio/webm', 'audio/wav', 'audio/mpeg', 'application/json', 'text/plain']
         });
 
@@ -60,25 +60,37 @@ export class InterviewStorageService {
 
   private async generateElevenLabsTranscript(audioBlob: Blob): Promise<ElevenLabsTranscript> {
     try {
+      console.log('Generating transcript with ElevenLabs...');
+      
       const formData = new FormData();
       formData.append('file', audioBlob);
-      formData.append('model_id', 'scribe_v1');
-      formData.append('diarize', 'true');
-      formData.append('tag_audio_events', 'true');
+      formData.append('model_id', 'whisper-1');  // Using Whisper model for better accuracy
+      formData.append('diarize', 'true');        // Enable speaker diarization
+      formData.append('tag_audio_events', 'true'); // Enable audio event tagging
+
+      const apiKey = import.meta.env.VITE_ELEVEN_LABS_API_KEY;
+      if (!apiKey) {
+        throw new Error('ElevenLabs API key not found');
+      }
 
       const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
         method: 'POST',
         headers: {
-          'xi-api-key': process.env.VITE_ELEVEN_LABS_API_KEY as string,
+          'xi-api-key': apiKey,
         },
         body: formData,
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('ElevenLabs API error response:', errorText);
         throw new Error(`ElevenLabs API error: ${response.statusText}`);
       }
 
-      return await response.json();
+      const transcript = await response.json();
+      console.log('ElevenLabs transcript generated:', transcript);
+
+      return transcript;
     } catch (error) {
       console.error('Failed to generate ElevenLabs transcript:', error);
       throw new Error('Failed to generate transcript');
@@ -105,19 +117,34 @@ export class InterviewStorageService {
         completedQuestions: session.responses?.length || 0
       };
 
-      // Generate ElevenLabs transcript
-      const elevenlabsTranscript = await this.generateElevenLabsTranscript(audioBlob);
-      
-      // Format transcript with speaker labels
-      const formattedTranscript = elevenlabsTranscript.words
-        .map(word => {
-          if (word.type === 'word') {
-            const speaker = word.speaker_id === 'speaker_1' ? 'Interviewer' : 'You';
-            return `${speaker}: ${word.text}`;
+      console.log('Generating ElevenLabs transcript...');
+      let formattedTranscript = realtimeTranscript;
+
+      try {
+        // Try to get a better transcript from ElevenLabs
+        const elevenlabsTranscript = await this.generateElevenLabsTranscript(audioBlob);
+        
+        // Format transcript with speaker labels and timestamps
+        formattedTranscript = `Interview Transcript\n\nCandidate: ${session.candidateName}\nDate: ${timestamp}\n\n`;
+        
+        elevenlabsTranscript.words.forEach((word, index) => {
+          if (word.type === 'word' && word.speaker_id) {
+            const speaker = word.speaker_id === 'speaker_1' ? 'Interviewer' : 'Candidate';
+            
+            // Add speaker label at the start of their turn
+            if (index === 0 || elevenlabsTranscript.words[index - 1]?.speaker_id !== word.speaker_id) {
+              formattedTranscript += `\n[${speaker} - ${new Date(word.start * 1000).toISOString()}]\n`;
+            }
+            
+            formattedTranscript += `${word.text} `;
           }
-          return word.text;
-        })
-        .join('');
+        });
+
+        console.log('Enhanced transcript generated successfully');
+      } catch (error) {
+        console.warn('Failed to generate ElevenLabs transcript, using realtime transcript instead:', error);
+        // Keep using the realtime transcript if ElevenLabs fails
+      }
 
       // Upload files in parallel
       const [audioUrl, transcriptUrl, metadataUrl] = await Promise.all([
@@ -158,6 +185,8 @@ export class InterviewStorageService {
     contentType: string
   ): Promise<string> {
     try {
+      console.log(`Uploading file: ${path}, size: ${blob.size} bytes, type: ${contentType}`);
+
       const { error: uploadError, data } = await supabase.storage
         .from(this.bucketName)
         .upload(path, blob, {
@@ -165,8 +194,16 @@ export class InterviewStorageService {
           upsert: false
         });
 
-      if (uploadError) throw uploadError;
-      if (!data?.path) throw new Error('Upload failed - no path returned');
+      if (uploadError) {
+        console.error('Upload error details:', uploadError);
+        throw uploadError;
+      }
+      
+      if (!data?.path) {
+        throw new Error('Upload failed - no path returned');
+      }
+
+      console.log(`File uploaded successfully: ${data.path}`);
 
       const { data: { publicUrl } } = supabase.storage
         .from(this.bucketName)
@@ -174,10 +211,10 @@ export class InterviewStorageService {
 
       return publicUrl;
     } catch (error) {
-      console.error('Failed to upload file:', error);
+      console.error(`Failed to upload ${path}:`, error);
       throw new Error(`Failed to upload ${path}`);
     }
-  }
+}
 
   private async scheduleCleanup(prefix: string) {
     try {

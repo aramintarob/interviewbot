@@ -3,8 +3,6 @@ import { Question, QuestionSequence as IQuestionSequence } from '@/types/questio
 import { questionService } from '@/services/questionService';
 import { QuestionPreview } from './QuestionPreview';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 
 interface QuestionSequenceProps {
   sequence: IQuestionSequence;
@@ -28,10 +26,13 @@ export function QuestionSequence({
   async function loadQuestions() {
     try {
       setLoading(true);
-      const loadedQuestions = await Promise.all(
-        sequence.questions.map(id => questionService.getQuestion(id))
-      );
-      setQuestions(loadedQuestions.filter((q): q is Question => q !== undefined));
+      if (!sequence.questions?.length) {
+        setQuestions([]);
+        return;
+      }
+      
+      // Since questions array now contains the full Question objects, not just IDs
+      setQuestions(sequence.questions);
     } catch (error) {
       console.error('Error loading questions:', error);
     } finally {
@@ -51,36 +52,11 @@ export function QuestionSequence({
   return (
     <Card className={className}>
       <CardHeader>
-        <div className="flex justify-between items-start gap-4">
-          <div>
-            <CardTitle className="text-xl">{sequence.name}</CardTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              {sequence.description}
-            </p>
-          </div>
-          <Badge variant="secondary">
-            {sequence.estimatedDuration} min
-          </Badge>
-        </div>
-        <div className="flex flex-wrap gap-2 mt-2">
-          <Badge variant="outline">{sequence.category}</Badge>
-          <Badge variant={
-            sequence.difficulty === 'advanced' ? 'destructive' : 
-            sequence.difficulty === 'intermediate' ? 'default' : 
-            'secondary'
-          }>
-            {sequence.difficulty}
-          </Badge>
-          {sequence.tags.map(tag => (
-            <Badge key={tag} variant="outline">
-              {tag}
-            </Badge>
-          ))}
-        </div>
+        <CardTitle className="text-xl">{sequence.name}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          {questions.map((question, index) => (
+          {questions.map((question) => (
             <QuestionPreview
               key={question.id}
               question={question}

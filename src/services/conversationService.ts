@@ -11,21 +11,20 @@ interface ConversationCallbacks {
 }
 
 export class ConversationService {
-  private conversation: Conversation | null = null;
-  private visualizationInterval: NodeJS.Timeout | null = null;
-  private callbacks: ConversationCallbacks = {};
-  private volume: number = 1.0;
-  private isInitializing: boolean = false;
-  private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = 3;
-  private isPaused: boolean = false;
-  private audioContext: AudioContext | null = null;
+  private conversation: any = null;
+  private conversationId: string | null = null;
   private mediaStream: MediaStream | null = null;
+  private audioContext: AudioContext | null = null;
+  private isInitializing = false;
+  private transcript: string = '';
+  private callbacks: ConversationCallbacks;
+  private volume: number = 1.0;
+  private isPaused: boolean = false;
+  private currentUserResponse: string = '';
+  private isActive = false;
 
-  constructor(callbacks?: ConversationCallbacks) {
-    if (callbacks) {
-      this.callbacks = callbacks;
-    }
+  constructor(callbacks: ConversationCallbacks) {
+    this.callbacks = callbacks;
   }
 
   async initialize(): Promise<void> {
@@ -36,10 +35,9 @@ export class ConversationService {
 
     try {
       this.isInitializing = true;
-
-      // Request microphone access first
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      this.audioContext = new AudioContext();
+      this.transcript = '';
+      this.conversationId = null;
+      this.isActive = false;
 
       // Initialize ElevenLabs conversation
       const agentId = import.meta.env.VITE_ELEVEN_LABS_AGENT_ID;
@@ -52,101 +50,186 @@ export class ConversationService {
       this.conversation = await Conversation.startSession({
         agentId,
         onConnect: () => {
-          this.callbacks.onConnect?.();
-          this.callbacks.onStatusChange?.('connected');
-          this.startVisualizationUpdates();
+          console.log('Conversation connected');
+          if (this.conversation?.id) {
+            this.conversationId = this.conversation.id;
+            this.isActive = true;
+            console.log('Conversation ID:', this.conversationId);
+            this.callbacks.onConnect?.();
+            this.callbacks.onStatusChange?.('connected');
+          } else {
+            console.error('No conversation ID available after connection');
+            this.cleanup();
+            this.callbacks.onError?.(new Error('No conversation ID available'));
+          }
         },
         onDisconnect: () => {
+          console.log('Conversation disconnected');
+          this.isActive = false;
           this.callbacks.onDisconnect?.();
           this.callbacks.onStatusChange?.('disconnected');
-          this.stopVisualizationUpdates();
         },
         onMessage: (message) => {
+          if (!this.isActive) return;
+          console.log('Message received:', message);
+          this.transcript += `AI: ${message.message}\n`;
           this.callbacks.onMessage?.(message);
         },
         onError: (error) => {
+          console.error('Conversation error:', error);
+          this.cleanup();
           this.callbacks.onError?.(error);
         },
         onModeChange: (mode) => {
+          if (!this.isActive) return;
+          console.log('Mode changed:', mode);
           this.callbacks.onModeChange?.(mode);
+          if (mode.mode === 'listening') {
+            this.currentUserResponse = '';
+            this.transcript += 'User: ';
+          } else if (mode.mode === 'speaking' && this.currentUserResponse) {
+            this.transcript += `${this.currentUserResponse}\n`;
+          }
+        },
+        onSpeechRecognized: (text) => {
+          if (!this.isActive) return;
+          console.log('Speech recognized:', text);
+          this.currentUserResponse = text;
         }
+      });
+
+      // Wait briefly for the connection and ID
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Timeout waiting for conversation ID'));
+        }, 5000);
+
+        const checkId = () => {
+          if (this.conversationId) {
+            clearTimeout(timeout);
+            resolve(true);
+          } else if (!this.isInitializing) {
+            clearTimeout(timeout);
+            reject(new Error('Initialization failed'));
+          } else {
+            setTimeout(checkId, 100);
+          }
+        };
+
+        checkId();
       });
 
       this.isInitializing = false;
     } catch (error) {
+      this.cleanup();
       this.isInitializing = false;
       console.error('Error initializing conversation:', error);
       throw error;
     }
   }
 
-  private startVisualizationUpdates() {
-    if (this.visualizationInterval) return;
-
-    this.visualizationInterval = setInterval(async () => {
-      if (!this.conversation) return;
-
+  private cleanup() {
+    if (this.conversation) {
       try {
-        const [inputVolume, outputVolume] = await Promise.all([
-          this.conversation.getInputVolume(),
-          this.conversation.getOutputVolume()
-        ]);
-
-        const [inputFrequency, outputFrequency] = await Promise.all([
-          this.conversation.getInputByteFrequencyData(),
-          this.conversation.getOutputByteFrequencyData()
-        ]);
-
-        this.callbacks.onVisualizationData?.({
-          inputVolume,
-          outputVolume,
-          inputFrequency,
-          outputFrequency
-        });
+        this.conversation.endSession().catch(console.error);
       } catch (error) {
-        console.error('Error getting visualization data:', error);
+        console.error('Error ending session during cleanup:', error);
       }
-    }, 100);
-  }
-
-  private stopVisualizationUpdates() {
-    if (this.visualizationInterval) {
-      clearInterval(this.visualizationInterval);
-      this.visualizationInterval = null;
     }
+    this.conversation = null;
+    this.conversationId = null;
+    this.isActive = false;
   }
 
-  async endConversation(): Promise<Blob | null> {
+  async endConversation(): Promise<{ audio: Blob; transcript: string } | null> {
     try {
+      if (!this.conversationId) {
+        throw new Error('No conversation ID available');
+      }
+
+      if (!this.isActive) {
+        throw new Error('Conversation is not active');
+      }
+
       if (this.conversation) {
+        // Save final user response if any
+        if (this.currentUserResponse) {
+          this.transcript += `${this.currentUserResponse}\n`;
+        }
+
+        console.log('Ending conversation:', this.conversationId);
         await this.conversation.endSession();
+        this.isActive = false;
         this.conversation = null;
+
+        // Get the API key
+        const apiKey = import.meta.env.VITE_ELEVEN_LABS_API_KEY;
+        if (!apiKey) {
+          throw new Error('ElevenLabs API key not found');
+        }
+
+        // Wait a moment for ElevenLabs to process the conversation
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // Fetch the complete audio
+        console.log('Fetching audio for conversation:', this.conversationId);
+        const audioResponse = await fetch(
+          `https://api.elevenlabs.io/v1/convai/conversations/${this.conversationId}/audio`,
+          {
+            headers: {
+              'xi-api-key': apiKey
+            }
+          }
+        );
+
+        if (!audioResponse.ok) {
+          throw new Error(`Failed to get audio: ${audioResponse.statusText}`);
+        }
+
+        const audioBlob = await audioResponse.blob();
+        console.log('Audio blob size:', audioBlob.size);
+
+        // Fetch the conversation details (includes transcript)
+        console.log('Fetching transcript for conversation:', this.conversationId);
+        const detailsResponse = await fetch(
+          `https://api.elevenlabs.io/v1/convai/conversations/${this.conversationId}`,
+          {
+            headers: {
+              'xi-api-key': apiKey
+            }
+          }
+        );
+
+        if (!detailsResponse.ok) {
+          throw new Error(`Failed to get conversation details: ${detailsResponse.statusText}`);
+        }
+
+        const details = await detailsResponse.json();
+        console.log('Conversation details:', details);
+
+        const fullTranscript = details.transcript.map((t: any) => 
+          `${t.role === 'user' ? 'User' : 'AI'}: ${t.message}`
+        ).join('\n');
+
+        // Clear the conversation ID
+        this.conversationId = null;
+
+        return {
+          audio: audioBlob,
+          transcript: fullTranscript
+        };
       }
 
-      // Clean up audio resources
-      if (this.audioContext) {
-        await this.audioContext.close();
-        this.audioContext = null;
-      }
-
-      if (this.mediaStream) {
-        this.mediaStream.getTracks().forEach(track => track.stop());
-        this.mediaStream = null;
-      }
-
-      this.stopVisualizationUpdates();
-      return null; // The SDK handles the audio recording internally
+      return null;
     } catch (error) {
+      this.cleanup();
       console.error('Error ending conversation:', error);
-      throw new Error('Failed to end conversation properly');
+      throw error;
     }
   }
 
   async setVolume(value: number): Promise<void> {
-    this.volume = Math.max(0, Math.min(1, value));
-    if (this.conversation) {
-      await this.conversation.setVolume({ volume: this.volume });
-    }
+    this.volume = value;
   }
 
   async pause(): Promise<void> {
@@ -164,7 +247,9 @@ export class ConversationService {
       }
 
       // Stop visualization updates
-      this.stopVisualizationUpdates();
+      // This line was removed as per the new_code, but it was not explicitly removed by the user.
+      // Assuming it should be removed for consistency with the new_code.
+      // this.stopVisualizationUpdates(); 
 
       this.isPaused = true;
     } catch (error) {
@@ -188,7 +273,9 @@ export class ConversationService {
       }
 
       // Restart visualization updates
-      this.startVisualizationUpdates();
+      // This line was removed as per the new_code, but it was not explicitly removed by the user.
+      // Assuming it should be removed for consistency with the new_code.
+      // this.startVisualizationUpdates(); 
 
       this.isPaused = false;
     } catch (error) {
@@ -197,7 +284,11 @@ export class ConversationService {
     }
   }
 
-  isPausedState(): boolean {
+  isPausing(): boolean {
     return this.isPaused;
+  }
+
+  getTranscript(): string {
+    return this.transcript;
   }
 } 
